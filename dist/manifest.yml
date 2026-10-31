@@ -1,0 +1,14 @@
+name: StructuredViews
+version: 0.1.4-alpha
+authors:
+- adpchrgruber
+description: "Named views, organised: Rhino's Named Views panel with nested folders, custom order and thumbnails."
+url: https://github.com/adpchrgruber/structured_views_Rh8
+icon: icon.png
+keywords:
+- named-views
+- views
+- folders
+- camera
+- panel
+- organize

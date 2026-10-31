@@ -1,5 +1,7 @@
 # Structured Views
 
+<img src="docs/panel.png" width="320" align="right" alt="The Structured Views panel in Rhino 8: top-level views, then folders with their thumbnails, a collapsed subfolder and an empty folder">
+
 Rhino's Named Views panel, with folders.
 
 Structured Views is a Rhino 8 plug-in (Mac and Windows). Its panel does everything the Named Views panel

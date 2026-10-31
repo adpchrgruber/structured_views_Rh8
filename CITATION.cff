@@ -1,0 +1,50 @@
+cff-version: 1.2.0
+message: "If you use Structured Views, please cite it as below. It was co-created with generative AI; see the README's 'Credits and AI disclosure'."
+type: software
+title: "Structured Views: Rhino's Named Views panel with folders"
+version: 0.9.0-beta
+date-released: 2026-10-31
+license: MIT
+authors:
+  - alias: adpchrgruber
+repository-code: "https://github.com/adpchrgruber/structured_views_Rh8"
+abstract: >-
+  Rhino 8 plug-in that adds a Named Views panel with nested folders: save, restore,
+  update, rename, duplicate, delete, properties, copy and paste, import, sorting,
+  thumbnails and animation settings as in Rhino's own panel, plus folders, custom order
+  and drag and drop. Folders are stored in the .3dm; views stay ordinary Rhino named
+  views. Developed with generative AI assistance (Claude Opus 5.5 in Claude Code,
+  Anthropic), directed and reviewed by the author.
+keywords:
+  - Rhino
+  - Rhinoceros 3D
+  - named views
+  - plug-in
+  - architecture
+references:
+  - type: software
+    title: "Rhinoceros 8 / RhinoCommon"
+    authors:
+      - name: "Robert McNeel & Associates"
+    year: 2026
+    url: "https://www.rhino3d.com/"
+  - type: software
+    title: "Eto.Forms"
+    authors:
+      - family-names: Wensley
+        given-names: Curtis
+    url: "https://github.com/picoe/Eto"
+  - type: software
+    title: "Claude (Opus 5.5 version)"
+    authors:
+      - name: Anthropic
+    year: 2026
+    url: "https://www.anthropic.com/claude"
+    notes: "Large language model; wrote code and texts for Structured Views."
+  - type: software
+    title: "Claude Code"
+    authors:
+      - name: Anthropic
+    year: 2026
+    url: "https://claude.com/claude-code"
+    notes: "Coding agent used to develop Structured Views."

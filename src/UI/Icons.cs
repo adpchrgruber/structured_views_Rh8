@@ -246,15 +246,15 @@ namespace StructuredViews
         void Draw(Graphics g)
         {
             g.AntiAlias = true;
-            var text = SystemColors.ControlText;
+            var text = Theme.Text;
             var box = new RectangleF(1, 1, Width - 2, Height - 2);
             if (_checked)
-                g.FillPath(new Color(SystemColors.Highlight, 0.22f), GraphicsPath.GetRoundRect(box, 5));
+                g.FillPath(new Color(Theme.Accent, 0.22f), GraphicsPath.GetRoundRect(box, 5));
             if (_pressed)
                 g.FillPath(new Color(text, 0.16f), GraphicsPath.GetRoundRect(box, 5));
             else if (_hover && Enabled)
                 g.FillPath(new Color(text, 0.08f), GraphicsPath.GetRoundRect(box, 5));
-            var color = !Enabled ? new Color(text, 0.3f) : _checked ? SystemColors.Highlight : new Color(text, 0.85f);
+            var color = !Enabled ? new Color(text, 0.3f) : _checked ? Theme.Accent : new Color(text, 0.85f);
             Icons.Draw(g, _icon, new RectangleF((Width - 16) / 2f, (Height - 16) / 2f, 16, 16), color);
         }
     }

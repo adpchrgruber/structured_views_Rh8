@@ -310,9 +310,9 @@ namespace StructuredViews
 
         #region Painting
 
-        static Color Text => SystemColors.ControlText;
+        static Color Text => Theme.Text;
         static Color Faint(float alpha) => new Color(Text, alpha);
-        static Color Accent => SystemColors.Highlight;
+        static Color Accent => Theme.Accent;
 
         // Painting is guarded too: on Mac an exception escaping a draw callback aborts Rhino.
         protected override void OnPaint(PaintEventArgs e)
@@ -459,7 +459,7 @@ namespace StructuredViews
             if (selected && focused)
             {
                 g.FillPath(Accent, GraphicsPath.GetRoundRect(new RectangleF(tx - 5, ty - 1, size.Width + 10, size.Height + 2), (size.Height + 2) / 2));
-                g.DrawText(_labelFont, SystemColors.HighlightText, tx, ty, label);
+                g.DrawText(_labelFont, Theme.AccentText, tx, ty, label);
             }
             else
                 g.DrawText(_labelFont, selected ? Text : Faint(0.85f), tx, ty, label);
@@ -485,9 +485,9 @@ namespace StructuredViews
             }
             else
                 g.FillPath(Faint(0.08f), frame);
-            g.DrawPath(new Pen(selected && focused ? new Color(SystemColors.HighlightText, 0.4f) : Faint(0.14f), 1), frame);
+            g.DrawPath(new Pen(selected && focused ? new Color(Theme.AccentText, 0.4f) : Faint(0.14f), 1), frame);
             var label = Fit(_listFont, view.View.Name, view.Label.Width);
-            g.DrawText(_listFont, selected && focused ? SystemColors.HighlightText : Text, view.Label.X, view.Label.MiddleY - _listFont.LineHeight / 2, label);
+            g.DrawText(_listFont, selected && focused ? Theme.AccentText : Text, view.Label.X, view.Label.MiddleY - _listFont.LineHeight / 2, label);
         }
 
         void PaintDragBadge(Graphics g)
@@ -501,7 +501,7 @@ namespace StructuredViews
             var size = _labelFont.MeasureString(text);
             var box = new RectangleF(_dragPoint.X + 14, _dragPoint.Y + 10, size.Width + 14, size.Height + 6);
             g.FillPath(new Color(Accent, 0.92f), GraphicsPath.GetRoundRect(box, box.Height / 2));
-            g.DrawText(_labelFont, SystemColors.HighlightText, box.X + 7, box.Y + 3, text);
+            g.DrawText(_labelFont, Theme.AccentText, box.X + 7, box.Y + 3, text);
         }
 
         /// <summary>Shortens text with an ellipsis to fit a width; cached per text, width and font.</summary>

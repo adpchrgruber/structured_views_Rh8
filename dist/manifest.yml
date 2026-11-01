@@ -1,5 +1,5 @@
 name: StructuredViews
-version: 0.9.0-beta
+version: 0.9.1-beta
 authors:
 - adpchrgruber
 description: "Sorts your named views into nested folders, in a panel that works like the Named Views panel in Rhino with thumbnails, custom order and drag and drop."

@@ -102,14 +102,14 @@ namespace StructuredViews
         static Control Divider()
         {
             var divider = new Drawable { Size = new Size(9, 18) };
-            divider.Paint += (s, e) => Safe("drawing", () => e.Graphics.FillRectangle(new Color(SystemColors.ControlText, 0.15f), 4, 2, 1, 14));
+            divider.Paint += (s, e) => Safe("drawing", () => e.Graphics.FillRectangle(new Color(Theme.Text, 0.15f), 4, 2, 1, 14));
             return divider;
         }
 
         static Control Rule()
         {
             var rule = new Drawable { Height = 1 };
-            rule.Paint += (s, e) => Safe("drawing", () => e.Graphics.FillRectangle(new Color(SystemColors.ControlText, 0.1f), 0, 0, rule.Width, 1));
+            rule.Paint += (s, e) => Safe("drawing", () => e.Graphics.FillRectangle(new Color(Theme.Text, 0.1f), 0, 0, rule.Width, 1));
             return rule;
         }
 

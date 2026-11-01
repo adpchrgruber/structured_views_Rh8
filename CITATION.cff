@@ -3,7 +3,7 @@ message: "If you use Structured Views, please cite it as below. It was co-create
 type: software
 title: "Structured Views: Rhino's Named Views panel with folders"
 version: 0.9.1-beta
-date-released: 2026-10-31
+date-released: 2026-11-01
 license: MIT
 authors:
   - alias: adpchrgruber

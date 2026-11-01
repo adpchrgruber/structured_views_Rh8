@@ -13,6 +13,27 @@ without the plug-in still see every view. The folders are extra information stor
 
 > Made with generative AI assistance — see [Credits and AI disclosure](#credits-and-ai-disclosure).
 
+## Installation
+
+Rhino 8 (Mac or Windows):
+
+- **From the Package Manager**: run `PackageManager`, search for *StructuredViews* and tick
+  *Include pre-releases* (beta versions are hidden without it). Install, then restart Rhino.
+- **From the package file**: download [`dist/structuredviews-0.9.1-beta-rh8_0-any.yak`](dist/) and
+  drag it into a Rhino window. Restart Rhino.
+- **Or from the command line**, with this repository checked out:
+
+  ```sh
+  yak install --source ./dist StructuredViews
+  ```
+
+  `yak` comes with Rhino: `/Applications/Rhino 8.app/Contents/Resources/bin/yak` on the
+  Mac, `C:\Program Files\Rhino 8\System\Yak.exe` on Windows.
+
+Then run `StructuredViews` to open the panel, and dock it next to your other panels.
+
+Tested in Rhino 8 on macOS (light and dark mode) and Windows.
+
 ## Layout
 
 The panel is a sectioned gallery rather than a tree:
@@ -82,6 +103,18 @@ dotnet build -c Release
 
 This builds `bin/Release/net7.0/StructuredViews.rhp` (Mac and Windows) and `net48` (Windows), and
 packs `dist/structuredviews-<version>-rh8_0-any.yak`. Icons are generated with `python3 tools/make_icon.py`.
+
+Rhino can't unload a plug-in: restart Rhino after rebuilding to pick up changes. Never copy a new build
+over a loaded `.rhp`; raise `<Version>` and install the new package instead.
+
+To publish a new version to the Rhino Package Manager:
+
+```sh
+yak login
+yak push dist/structuredviews-<version>-rh8_0-any.yak
+```
+
+A published version can't be replaced, only hidden with `yak yank`; raise `<Version>` for every release.
 
 ## Credits and AI disclosure
 

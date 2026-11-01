@@ -1,3 +1,4 @@
+<img width="798" height="595" alt="Bildschirmfoto 2026-11-01 um 13 12 58" src="https://github.com/user-attachments/assets/64c31263-519c-4864-8003-c773953ce4b5" />
 # Structured Views
 
 <img src="docs/panel.png" width="320" align="right" alt="The Structured Views panel in Rhino 8: top-level views, then folders with their thumbnails, a collapsed subfolder and an empty folder">

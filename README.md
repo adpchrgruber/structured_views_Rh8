@@ -1,7 +1,4 @@
-<img width="798" height="595" alt="Bildschirmfoto 2026-11-01 um 13 12 58" src="https://github.com/user-attachments/assets/64c31263-519c-4864-8003-c773953ce4b5" />
 # Structured Views
-
-
 
 <img src="docs/panel.png" width="320" align="right" alt="The Structured Views panel in Rhino 8: top-level views, then folders with their thumbnails, a collapsed subfolder and an empty folder">
 
@@ -16,26 +13,78 @@ without the plug-in still see every view. The folders are extra information stor
 
 > Made with generative AI assistance — see [Credits and AI disclosure](#credits-and-ai-disclosure).
 
+<br clear="right">
+
 ## Installation
 
-Rhino 8 (Mac or Windows):
+Requires Rhino 8 on Mac or Windows. Tested on macOS (light and dark mode) and Windows.
 
-- **From the Package Manager**: run `PackageManager`, search for *StructuredViews* and tick
-  *Include pre-releases* (beta versions are hidden without it). Install, then restart Rhino.
-- **From the package file**: download [`dist/structuredviews-0.9.1-beta-rh8_0-any.yak`](dist/) and
-  drag it into a Rhino window. Restart Rhino.
-- **Or from the command line**, with this repository checked out:
+### Step by step, with the Package Manager
+
+1. **Open the Package Manager.** In Rhino, type this command and press Enter:
+
+   ```
+   PackageManager
+   ```
+
+   or use the menu: *Tools › Package Manager…* (Mac), *Tools › Package Manager* (Windows).
+
+2. **Turn on pre-releases.** Tick **Include pre-releases** at the bottom left of the window.
+   Structured Views is a beta (`0.9.1-beta`), and beta versions are hidden without this box.
+
+3. **Find it.** On the **Online** tab, type `StructuredViews` into the search field.
+
+4. **Install.** Select *StructuredViews* (the blue camera) and click **Install**.
+
+   <img src="docs/package-manager.png" width="600" alt="StructuredViews 0.9.1-beta in Rhino's Package Manager: search result with the blue camera icon, author, version, publication date, link and description">
+
+5. **Restart Rhino.** Quit Rhino completely and open it again; the plug-in loads at start-up.
+
+6. **Open the panel.** Type this command and press Enter:
+
+   ```
+   StructuredViews
+   ```
+
+   The Structured Views panel opens. Drag its tab into the side bar to dock it next to your other
+   panels; Rhino remembers the place.
+
+7. **Get started.** Click the camera button to save the current viewport as a named view, and the
+   folder button to create a folder. Views you already have appear at the top, ready to drag into
+   folders.
+
+**Updates** arrive through the Package Manager. Keep *Include pre-releases* ticked, and either let
+*Automatically update packages when Rhino starts* do it, or select StructuredViews on the
+**Installed** tab and pick the new version. **To uninstall**, select it on the **Installed** tab and
+click **Uninstall**, then restart Rhino. Your folders stay in your files, and your named views are
+untouched.
+
+### Other ways to install
+
+- **From the package file:** download
+  [`dist/structuredviews-0.9.1-beta-rh8_0-any.yak`](dist/) and drag it into a Rhino window. Restart
+  Rhino.
+- **From the command line** (Rhino closed), with this repository checked out:
+
+  Mac (Terminal):
 
   ```sh
-  yak install --source ./dist StructuredViews
+  "/Applications/Rhino 8.app/Contents/Resources/bin/yak" install --source ./dist StructuredViews 0.9.1-beta
   ```
 
-  `yak` comes with Rhino: `/Applications/Rhino 8.app/Contents/Resources/bin/yak` on the
-  Mac, `C:\Program Files\Rhino 8\System\Yak.exe` on Windows.
+  Windows (Command Prompt):
 
-Then run `StructuredViews` to open the panel, and dock it next to your other panels.
+  ```bat
+  "C:\Program Files\Rhino 8\System\Yak.exe" install --source .\dist StructuredViews 0.9.1-beta
+  ```
 
-Tested in Rhino 8 on macOS (light and dark mode) and Windows.
+  Or straight from the package server, from any folder:
+
+  ```sh
+  "/Applications/Rhino 8.app/Contents/Resources/bin/yak" install StructuredViews 0.9.1-beta
+  ```
+
+  Giving the version number makes sure yak installs this beta.
 
 ## Layout
 

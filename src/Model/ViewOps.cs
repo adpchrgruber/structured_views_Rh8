@@ -319,25 +319,101 @@ namespace StructuredViews
         }
 
         /// <summary>
-        /// Imports the named views of a .3dm into a new folder named after the file, inside
-        /// <paramref name="parent"/>. The file's own folders (if it was organised with this plug-in) are kept.
-        /// Returns the new folder's id, or Guid.Empty if the file has no named views.
+        /// Writes named views and their folders to a .3dm that holds nothing else, so it can be imported
+        /// here or with Rhino's own NamedView › Import. Selected folders go with everything below them; a
+        /// selected view whose folder is not exported lands at the top level. Thumbnails are not exported:
+        /// they are captured again after import. Returns the number of views written.
         /// </summary>
-        public static Guid Import(RhinoDoc doc, string path, Guid parent)
+        public static int Export(RhinoDoc doc, string path, ICollection<Guid> viewIds, ICollection<Guid> folderIds)
         {
-            var file = File3dm.Read(path) ?? throw new IOException("Could not read " + Path.GetFileName(path) + ".");
-            var views = file.NamedViews.ToList();
+            var store = FolderStore.Load(doc);
+            var folders = new HashSet<Guid>();
+            foreach (var folder in folderIds.Where(store.Folders.ContainsKey))
+                folders.UnionWith(store.Subtree(folder));
+            var views = doc.NamedViews.Select(v => v.NamedViewId)
+                .Where(id => viewIds.Contains(id) || folders.Contains(store.FolderOf(id)))
+                .ToList();
+
+            var file = new File3dm();
+            file.Settings.ModelUnitSystem = doc.ModelUnitSystem;
+            foreach (var id in views)
+                file.NamedViews.Add(doc.NamedViews[IndexOf(doc, id)]);
+            store.WriteTo(file.Strings, folders, views);
+            if (!file.Write(path, 8))
+                throw new IOException("Could not write " + Path.GetFileName(path) + ".");
+            return views.Count;
+        }
+
+        /// <summary>Exports every named view and folder of the document.</summary>
+        public static int ExportAll(RhinoDoc doc, string path)
+        {
+            var store = FolderStore.Load(doc);
+            return Export(doc, path, doc.NamedViews.Select(v => v.NamedViewId).ToList(), store.Folders.Keys.ToList());
+        }
+
+        public static File3dm ReadFile(string path)
+        {
+            return File3dm.Read(path) ?? throw new IOException("Could not read " + Path.GetFileName(path) + ".");
+        }
+
+        public sealed class ImportOptions
+        {
+            /// <summary>Ids (in the source file) of the views to import; null imports everything, empty folders included.</summary>
+            public ICollection<Guid> Views;
+            /// <summary>Into a new folder named after the file (inside the target), or straight into the target folder.</summary>
+            public bool IntoNewFolder = true;
+            /// <summary>Replace views with the same name (they keep their id and folder) instead of adding "Name 2".</summary>
+            public bool Replace;
+        }
+
+        /// <summary>
+        /// Imports named views from a .3dm, keeping the file's own folders (if it was organised with this
+        /// plug-in). Only the folders that hold imported views are created. Returns the folder that received
+        /// them (Guid.Empty = top level), or null if nothing was imported.
+        /// </summary>
+        public static Guid? Import(RhinoDoc doc, File3dm file, string fileName, Guid target, ImportOptions options)
+        {
+            var views = file.NamedViews.Where(v => options.Views == null || options.Views.Contains(v.NamedViewId)).ToList();
             if (views.Count == 0)
-                return Guid.Empty;
+                return null;
 
             var source = FolderStore.Load(file);
             var store = FolderStore.Load(doc);
-            var top = store.AddFolder(Path.GetFileNameWithoutExtension(path), parent);
-            // Recreate the file's folders level by level in their custom order, so siblings keep their order.
-            var folderMap = new Dictionary<Guid, Guid> { [Guid.Empty] = top.Id };
+            if (!store.Folders.ContainsKey(target))
+                target = Guid.Empty;
+            // Views that replace one of the same name keep that view's place, so they need no folders.
+            bool Replaces(Rhino.DocObjects.ViewInfo info) => options.Replace && doc.NamedViews.FindByName(info.Name) >= 0;
+            var added = views.Where(v => !Replaces(v)).ToList();
+
+            // Only the folders the added views live in, plus, for Import All, the file's empty folders.
+            var needed = new HashSet<Guid>();
+            void WithParents(Guid folder)
+            {
+                for (var f = folder; f != Guid.Empty && source.Folders.ContainsKey(f) && needed.Add(f); f = source.Folders[f].Parent)
+                {
+                }
+            }
+            foreach (var view in added)
+                WithParents(source.FolderOf(view.NamedViewId));
+            if (options.Views == null)
+            {
+                var holding = new HashSet<Guid>();
+                foreach (var view in views)
+                {
+                    for (var f = source.FolderOf(view.NamedViewId); f != Guid.Empty && holding.Add(f); f = source.Folders[f].Parent)
+                    {
+                    }
+                }
+                foreach (var folder in source.Folders.Keys.Where(f => !holding.Contains(f)))
+                    WithParents(folder);
+            }
+            var top = options.IntoNewFolder && (added.Count > 0 || needed.Count > 0) ? store.AddFolder(fileName, target).Id : target;
+
+            // Recreate the folders level by level in their custom order, so siblings keep their order.
+            var folderMap = new Dictionary<Guid, Guid> { [Guid.Empty] = top };
             void CopyFolders(Guid sourceParent)
             {
-                foreach (var folder in source.ChildFolders(sourceParent).OrderBy(f => f.Order).ThenBy(f => f.Name, NaturalComparer.Instance))
+                foreach (var folder in source.ChildFolders(sourceParent).Where(f => needed.Contains(f.Id)).OrderBy(f => f.Order).ThenBy(f => f.Name, NaturalComparer.Instance))
                 {
                     folderMap[folder.Id] = store.AddFolder(folder.Name, folderMap[sourceParent]).Id;
                     CopyFolders(folder.Id);
@@ -345,14 +421,30 @@ namespace StructuredViews
             }
             CopyFolders(Guid.Empty);
 
+            var appended = new List<(Guid Id, double Order)>();
             foreach (var info in views)
             {
                 var sourceId = info.NamedViewId;
-                var id = AddCopy(doc, info, info.Name);
-                if (id != Guid.Empty)
-                    store.SetPlace(id, folderMap.TryGetValue(source.FolderOf(sourceId), out var folder) ? folder : top.Id, source.OrderOf(sourceId));
+                if (Replaces(info))
+                {
+                    var id = doc.NamedViews[doc.NamedViews.FindByName(info.Name)].NamedViewId;
+                    if (doc.NamedViews.Add(info) >= 0)
+                        Thumbnails.Set(doc, id, null);
+                    continue;
+                }
+                var copy = AddCopy(doc, info, info.Name);
+                if (copy == Guid.Empty)
+                    continue;
+                var folder = folderMap.TryGetValue(source.FolderOf(sourceId), out var mapped) ? mapped : top;
+                if (folder == top && !options.IntoNewFolder)
+                    appended.Add((copy, source.OrderOf(sourceId)));
+                else
+                    store.SetPlace(copy, folder, source.OrderOf(sourceId));
             }
-            return top.Id;
+            // Views that land in an existing folder go to its end, in the file's order.
+            if (appended.Count > 0)
+                MoveViews(doc, appended.OrderBy(v => double.IsNaN(v.Order) ? double.MaxValue : v.Order).Select(v => v.Id).ToList(), top, Guid.Empty);
+            return top;
         }
 
         #endregion

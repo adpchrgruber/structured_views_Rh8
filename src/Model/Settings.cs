@@ -3,7 +3,7 @@ using Rhino;
 
 namespace StructuredViews
 {
-    public enum ViewMode { Thumbnails, List }
+    public enum ViewMode { Thumbnails, List, Names }
 
     public enum SortMode { Custom, NameAscending, NameDescending }
 

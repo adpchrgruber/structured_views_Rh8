@@ -233,9 +233,7 @@ namespace StructuredViews
             if (_views.TryGetValue(viewId, out var current) && current.Folder == folder && current.Order.Equals(order))
                 return;
             _views[viewId] = new Place { Folder = folder, Order = order };
-            var value = (folder == Guid.Empty ? "" : folder.ToString("D"))
-                        + (double.IsNaN(order) ? "" : "|" + order.ToString("R", CultureInfo.InvariantCulture));
-            _doc?.Strings.SetString(Section, key, value);
+            _doc?.Strings.SetString(Section, key, PlaceValue(folder, order));
         }
 
         public void SetFolder(Guid viewId, Guid folder)
@@ -252,9 +250,56 @@ namespace StructuredViews
 
         void WriteFolder(Folder folder)
         {
-            var parent = folder.Parent == Guid.Empty ? "" : folder.Parent.ToString("D");
-            _doc?.Strings.SetString(Section, FolderPrefix + folder.Id.ToString("D"),
-                parent + "|" + folder.Order.ToString("R", CultureInfo.InvariantCulture) + "|" + folder.Name);
+            _doc?.Strings.SetString(Section, FolderPrefix + folder.Id.ToString("D"), FolderValue(folder.Parent, folder));
+        }
+
+        static string FolderValue(Guid parent, Folder folder)
+        {
+            return (parent == Guid.Empty ? "" : parent.ToString("D")) + "|" + folder.Order.ToString("R", CultureInfo.InvariantCulture) + "|" + folder.Name;
+        }
+
+        static string PlaceValue(Guid folder, double order)
+        {
+            return (folder == Guid.Empty ? "" : folder.ToString("D")) + (double.IsNaN(order) ? "" : "|" + order.ToString("R", CultureInfo.InvariantCulture));
+        }
+
+        /// <summary>
+        /// Writes some folders and the places of some views into another file (export). A folder whose
+        /// parent is not exported becomes top-level there; so does a view whose folder is not exported.
+        /// </summary>
+        public void WriteTo(Rhino.FileIO.File3dmStringTable strings, ICollection<Guid> folders, IEnumerable<Guid> views)
+        {
+            foreach (var id in folders)
+            {
+                if (Folders.TryGetValue(id, out var folder))
+                    strings.SetString(Section, FolderPrefix + id.ToString("D"), FolderValue(folders.Contains(folder.Parent) ? folder.Parent : Guid.Empty, folder));
+            }
+            foreach (var view in views)
+            {
+                var folder = FolderOf(view);
+                if (!folders.Contains(folder))
+                    folder = Guid.Empty;
+                var order = OrderOf(view);
+                if (folder != Guid.Empty || !double.IsNaN(order))
+                    strings.SetString(Section, ViewPrefix + view.ToString("D"), PlaceValue(folder, order));
+            }
+        }
+
+        /// <summary>The folder and all folders below it.</summary>
+        public HashSet<Guid> Subtree(Guid folder)
+        {
+            var ids = new HashSet<Guid> { folder };
+            var added = true;
+            while (added)
+            {
+                added = false;
+                foreach (var f in Folders.Values)
+                {
+                    if (ids.Contains(f.Parent) && ids.Add(f.Id))
+                        added = true;
+                }
+            }
+            return ids;
         }
 
         static string Clean(string name, string fallback)

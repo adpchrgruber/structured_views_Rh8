@@ -30,13 +30,13 @@ Requires Rhino 8 on Mac or Windows. Tested on macOS (light and dark mode) and Wi
    or use the menu: *Tools › Package Manager…* (Mac), *Tools › Package Manager* (Windows).
 
 2. **Turn on pre-releases.** Tick **Include pre-releases** at the bottom left of the window.
-   Structured Views is a beta (`0.9.1-beta`), and beta versions are hidden without this box.
+   Structured Views is a beta (`0.9.3-beta`), and beta versions are hidden without this box.
 
 3. **Find it.** On the **Online** tab, type `StructuredViews` into the search field.
 
 4. **Install.** Select *StructuredViews* (the blue camera) and click **Install**.
 
-   <img src="docs/package-manager.png" width="600" alt="StructuredViews 0.9.1-beta in Rhino's Package Manager: search result with the blue camera icon, author, version, publication date, link and description">
+   <img src="docs/package-manager.png" width="600" alt="StructuredViews in Rhino's Package Manager: search result with the blue camera icon, author, version, publication date, link and description">
 
 5. **Restart Rhino.** Quit Rhino completely and open it again; the plug-in loads at start-up.
 
@@ -62,26 +62,26 @@ untouched.
 ### Other ways to install
 
 - **From the package file:** download
-  [`dist/structuredviews-0.9.1-beta-rh8_0-any.yak`](dist/) and drag it into a Rhino window. Restart
+  [`dist/structuredviews-0.9.3-beta-rh8_0-any.yak`](dist/) and drag it into a Rhino window. Restart
   Rhino.
 - **From the command line** (Rhino closed), with this repository checked out:
 
   Mac (Terminal):
 
   ```sh
-  "/Applications/Rhino 8.app/Contents/Resources/bin/yak" install --source ./dist StructuredViews 0.9.1-beta
+  "/Applications/Rhino 8.app/Contents/Resources/bin/yak" install --source ./dist StructuredViews 0.9.3-beta
   ```
 
   Windows (Command Prompt):
 
   ```bat
-  "C:\Program Files\Rhino 8\System\Yak.exe" install --source .\dist StructuredViews 0.9.1-beta
+  "C:\Program Files\Rhino 8\System\Yak.exe" install --source .\dist StructuredViews 0.9.3-beta
   ```
 
   Or straight from the package server, from any folder:
 
   ```sh
-  "/Applications/Rhino 8.app/Contents/Resources/bin/yak" install StructuredViews 0.9.1-beta
+  "/Applications/Rhino 8.app/Contents/Resources/bin/yak" install StructuredViews 0.9.3-beta
   ```
 
   Giving the version number makes sure yak installs this beta.
@@ -95,16 +95,18 @@ The panel is a sectioned gallery rather than a tree:
   Its views flow underneath in the same evenly spaced grid, followed by its subfolders.
 - Nesting is shown by indenting the header and its contents and by a thin guide line, so thumbnails stay
   in clean columns instead of stepping sideways with every level.
-- List mode uses the same sections with compact rows.
+- Three view modes use the same sections: **Thumbnails** (the grid), **List** (rows with a small
+  thumbnail) and **Names** (compact text rows, no thumbnails — handy for long lists; no thumbnails are
+  captured while it is on).
 
 ## Using it
 
 Run `StructuredViews` to open the panel.
 
 The toolbar follows Rhino's Named Views panel: **Save**, **New Folder** | **Restore**, **Delete**,
-**Copy**, **Paste**, **Import** | **Duplicate**, **Move Up**, **Move Down**, then on the right the
-thumbnail/list switch and an options menu (View Mode, Sort By, Animate Restore, Animation Settings,
-Refresh Thumbnails, Expand/Collapse All Folders). Below the views, as in Rhino's panel, are
+**Copy**, **Paste**, **Import and Export** | **Duplicate**, **Move Up**, **Move Down**, then on the
+right the view-mode button (thumbnails → list → names) and an options menu (View Mode, Sort By,
+Animate Restore, Animation Settings, Refresh Thumbnails, Expand/Collapse All Folders). Below the views, as in Rhino's panel, are
 **Auto-update thumbnails** and **Restore aspect ratio**. On a narrow panel the toolbar wraps onto a
 second row instead of hiding buttons.
 
@@ -112,9 +114,9 @@ second row instead of hiding buttons.
 |---|---|
 | Save the current viewport | Camera button. The view goes into the selected folder |
 | New folder | Folder button. It is created inside the selected folder |
-| Restore | Double-click, Return, the restore button, or right-click › Restore › To Current Viewport / To New Floating Viewport |
+| Restore | Double-click the thumbnail (or the empty part of a row), Return, the restore button, or right-click › Restore › To Current Viewport / To New Floating Viewport |
 | Update to the current viewport | Right-click › Update to Current Viewport |
-| Rename | Right-click › Rename…, or F2 |
+| Rename a view or folder | Double-click its name and type; Return saves, Esc cancels, clicking elsewhere saves. Also right-click › Rename |
 | Duplicate | Duplicate button, right-click › Duplicate, or ⌘D / Ctrl+D |
 | Delete | ✕ button, Delete or Backspace. A deleted folder's contents move up one level |
 | Properties (name, camera, target, lens) | Right-click › Properties… |
@@ -122,9 +124,20 @@ second row instead of hiding buttons.
 | Move into a folder | Drag onto a folder header, or right-click › Move to Folder |
 | Reorder (Custom Order) | Drag between thumbnails, or Move Up / Move Down. Drag onto the top or bottom edge of a folder header to put a folder before or after it |
 | Copy by dragging | Hold Option (Alt) while dragging |
-| Collapse or expand a folder | Click its chevron, double-click its header, or use ← / → |
+| Collapse or expand a folder | Click its chevron, double-click the header beside the name, or use ← / → |
 | Select several | ⌘ or Ctrl click, Shift click, ⌘A / Ctrl+A |
-| Import from a .3dm | Import button. Views go into a new folder named after the file, and the file's own folders are kept |
+| Clear the selection | Click any empty space in the panel, or press Esc. Items in a folder you collapse leave the selection |
+| Export | Import and Export button › **Export Selected…** (the selected views, and the selected folders with everything inside) or **Export All…** |
+| Import | Import and Export button › **Import All…** or **Import Selected…** (tick what you want in the file's folder tree) |
+
+**Import and export.** An export is a .3dm that holds only the named views and their folders (no
+geometry, the document's units). Structured Views imports it with its folders; Rhino's own
+*NamedView › Import* reads the views too, without folders. Thumbnails are not exported, they are
+captured again after import. When importing you choose where the views go — a new folder named after
+the file, or the selected folder — and what happens when a name already exists: **Keep both** (the
+import gets a number, "Roof 2") or **Replace** (the existing view takes the imported camera and keeps
+its place). Only folders that receive views are created; Import All also brings the file's empty
+folders.
 
 ## How it works
 

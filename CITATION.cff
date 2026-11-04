@@ -2,15 +2,15 @@ cff-version: 1.2.0
 message: "If you use Structured Views, please cite it as below. It was co-created with generative AI; see the README's 'Credits and AI disclosure'."
 type: software
 title: "Structured Views: Rhino's Named Views panel with folders"
-version: 0.9.1-beta
-date-released: 2026-11-01
+version: 0.9.3-beta
+date-released: 2026-11-04
 license: MIT
 authors:
   - alias: adpchrgruber
 repository-code: "https://github.com/adpchrgruber/structured_views_Rh8"
 abstract: >-
   Rhino 8 plug-in that adds a Named Views panel with nested folders: save, restore,
-  update, rename, duplicate, delete, properties, copy and paste, import, sorting,
+  update, rename in place, duplicate, delete, properties, copy and paste, import and export, sorting,
   thumbnails and animation settings as in Rhino's own panel, plus folders, custom order
   and drag and drop. Folders are stored in the .3dm; views stay ordinary Rhino named
   views. Developed with generative AI assistance (Claude Opus 5.5 in Claude Code,

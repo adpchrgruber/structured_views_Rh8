@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using Eto.Drawing;
@@ -16,8 +17,8 @@ namespace StructuredViews
 {
     /// <summary>
     /// The Structured Views panel: Rhino's Named Views panel (save, restore, update, rename, duplicate,
-    /// delete, properties, copy/paste, import, list/thumbnail modes, sorting, animation settings) with
-    /// folders. Rhino raises no event when named views change, so the panel compares a signature on idle.
+    /// delete, properties, copy/paste, import, thumbnail/list modes, sorting, animation settings) with
+    /// folders, in-place renaming, a names-only mode and import/export of selected or all views. Rhino raises no event when named views change, so the panel compares a signature on idle.
     /// Every UI callback goes through <see cref="Safe"/>: on Mac an exception escaping an Eto handler aborts Rhino.
     /// </summary>
     [Guid("a2d88ec3-48bf-4758-b46b-ba822b0b949f")]
@@ -30,7 +31,12 @@ namespace StructuredViews
 
         readonly uint _serial;
         readonly ViewCanvas _canvas;
+        readonly PixelLayout _content;
         readonly Scrollable _scroll;
+        TextBox _editor;
+        Guid _editing;
+        bool _editingFolder;
+        readonly Stopwatch _editorAge = new Stopwatch();
         readonly IconButton _mode;
         readonly IconButton _restore;
         readonly IconButton _delete;
@@ -60,7 +66,19 @@ namespace StructuredViews
             _canvas.DropRequested += d => Safe("move", () => Drop(d));
             _canvas.SelectionChanged += () => Safe("selection", UpdateToolbar);
             _canvas.KeyDown += (s, e) => Safe("key", () => OnKey(e));
-            _scroll = new Scrollable { Content = _canvas, Border = BorderType.None, ExpandContentWidth = true, ExpandContentHeight = false };
+            _canvas.RenameRequested += (id, folder, box, name) => Safe("rename", () => ShowEditor(id, folder, box, name));
+            // A click anywhere in the gallery ends renaming (and saves the name) before it does anything else.
+            _canvas.MouseDown += (s, e) => Safe("rename", () => CloseEditor(true));
+            // The gallery sits in a layout that can also hold the rename field on top of it. The gallery
+            // follows the visible width and is never shorter than the visible height.
+            _content = new PixelLayout();
+            _content.Add(_canvas, 0, 0);
+            _scroll = new Scrollable { Content = _content, Border = BorderType.None, ExpandContentWidth = true, ExpandContentHeight = false };
+            _scroll.SizeChanged += (s, e) => Safe("layout", () =>
+            {
+                _canvas.Width = Math.Max(120, _scroll.ClientSize.Width);
+                _canvas.MinimumHeight = _scroll.ClientSize.Height;
+            });
 
             // The toolbar of Rhino's Named Views panel (minus widget, edit-by-looking and help), plus New Folder.
             var save = Tool(Icon.SaveView, "Save the current viewport as a named view", SaveView);
@@ -69,15 +87,16 @@ namespace StructuredViews
             _delete = Tool(Icon.Delete, "Delete", DeleteSelected);
             _copy = Tool(Icon.Copy, "Copy", CopySelected);
             _paste = Tool(Icon.Paste, "Paste", Paste);
-            var import = Tool(Icon.Import, "Import named views from a 3dm file", ImportViews);
+            var transfer = Tool(Icon.ImportExport, "Import and export named views", null);
+            transfer.Click += (s, e) => Safe("menu", () => ShowMenu(TransferMenu(), transfer, new PointF(0, transfer.Height)));
             _duplicate = Tool(Icon.Duplicate, "Duplicate", DuplicateSelected);
             _up = Tool(Icon.MoveUp, "Move up (custom order)", () => Nudge(-1));
             _down = Tool(Icon.MoveDown, "Move down (custom order)", () => Nudge(1));
-            _mode = Tool(Icon.List, "Switch between thumbnails and list", () => Settings.ViewMode = Settings.ViewMode == ViewMode.List ? ViewMode.Thumbnails : ViewMode.List);
+            _mode = Tool(Icon.List, "", () => Settings.ViewMode = NextMode(Settings.ViewMode));
             var more = Tool(Icon.More, "Options", null);
             more.Click += (s, e) => Safe("menu", () => ShowMenu(OptionsMenu(), more, new PointF(0, more.Height)));
             var toolbar = new ToolStrip(
-                new Control[] { save, folder, Divider(), _restore, _delete, _copy, _paste, import, Divider(), _duplicate, _up, _down },
+                new Control[] { save, folder, Divider(), _restore, _delete, _copy, _paste, transfer, Divider(), _duplicate, _up, _down },
                 new Control[] { _mode, more });
 
             // The options Rhino's panel shows below its list.
@@ -212,6 +231,12 @@ namespace StructuredViews
             if (_idleClock.ElapsedMilliseconds < 300)
                 return;
             _idleClock.Restart();
+            if (_editor != null)
+            {
+                if (_editorAge.ElapsedMilliseconds > 500 && !_editor.HasFocus)
+                    Safe("rename", () => CloseEditor(true));
+                return;
+            }
             Safe("refresh", () =>
             {
                 var doc = Doc;
@@ -240,7 +265,8 @@ namespace StructuredViews
         /// </summary>
         void CaptureOneThumbnail(RhinoDoc doc)
         {
-            if (Command.InCommand() || Mouse.Buttons != MouseButtons.None || _sinceModelChange.ElapsedMilliseconds < 1500)
+            // No thumbnails on screen in names-only mode: capture nothing until they are shown again.
+            if (Settings.ViewMode == ViewMode.Names || Command.InCommand() || Mouse.Buttons != MouseButtons.None || _sinceModelChange.ElapsedMilliseconds < 1500)
                 return;
             for (int i = 0; i < doc.NamedViews.Count; i++)
             {
@@ -292,13 +318,18 @@ namespace StructuredViews
 
         void ApplySettings()
         {
-            _mode.Icon = Settings.ViewMode == ViewMode.List ? Icon.Thumbnails : Icon.List;
+            // The button shows (and switches to) the next mode: thumbnails → list → names → thumbnails.
+            var next = NextMode(Settings.ViewMode);
+            _mode.Icon = next == ViewMode.Thumbnails ? Icon.Thumbnails : next == ViewMode.List ? Icon.List : Icon.Names;
+            _mode.ToolTip = "Show " + (next == ViewMode.Thumbnails ? "thumbnails" : next == ViewMode.List ? "list with small thumbnails" : "names only");
             _autoUpdate.Checked = Settings.AutoUpdateThumbnails;
             _aspectRatio.Checked = Settings.RestoreAspectRatio;
             _canvas.SetPresentation(Settings.ViewMode, Settings.ThumbnailSize, Settings.Sort);
             _dirty = true;
             UpdateToolbar();
         }
+
+        static ViewMode NextMode(ViewMode mode) => mode == ViewMode.Thumbnails ? ViewMode.List : mode == ViewMode.List ? ViewMode.Names : ViewMode.Thumbnails;
 
         void UpdateToolbar()
         {
@@ -386,28 +417,74 @@ namespace StructuredViews
             Refresh(new[] { folder.Id });
         }
 
+        /// <summary>The menu's Rename: rename the one selected view or folder in place. (Not F2: Rhino keeps
+        /// that key for its Command History.)</summary>
         void RenameSelected()
         {
-            var doc = Doc;
-            if (doc == null)
+            var ids = _canvas.SelectedViews.Concat(_canvas.SelectedFolders).ToList();
+            if (ids.Count == 1)
+                _canvas.BeginRename(ids[0]);
+        }
+
+        void ShowEditor(Guid id, bool folder, RectangleF box, string name)
+        {
+            CloseEditor(false);
+            _editing = id;
+            _editingFolder = folder;
+            var editor = new TextBox { Text = name, Size = new Size((int)Math.Max(60, box.Width), (int)box.Height) };
+            editor.KeyDown += (s, e) => Safe("rename", () =>
+            {
+                if (e.Key == Keys.Enter)
+                {
+                    CloseEditor(true);
+                    e.Handled = true;
+                }
+                else if (e.Key == Keys.Escape)
+                {
+                    CloseEditor(false);
+                    e.Handled = true;
+                }
+            });
+            // No LostFocus: on Mac a text field reports it the moment its editing starts. Clicks in the
+            // gallery and an idle check (focus really gone, e.g. a click in a viewport) end renaming instead.
+            _editor = editor;
+            _editorAge.Restart();
+            _canvas.EditingId = id;
+            _canvas.Invalidate();
+            _content.Add(editor, (int)box.X, (int)box.Y);
+            editor.Focus();
+            editor.SelectAll();
+        }
+
+        /// <summary>Ends in-place renaming, saving the name or not. The field goes away after the event that ended it.</summary>
+        void CloseEditor(bool commit)
+        {
+            var editor = _editor;
+            if (editor == null)
                 return;
-            var folder = _canvas.SelectedFolders.FirstOrDefault();
-            var view = _canvas.SelectedViews.FirstOrDefault();
-            if (folder != Guid.Empty && view == Guid.Empty)
+            _editor = null;
+            _canvas.EditingId = Guid.Empty;
+            _canvas.Invalidate();
+            var name = (editor.Text ?? "").Trim();
+            editor.Visible = false;
+            Application.Instance.AsyncInvoke(() => Safe("rename", () => _content.Remove(editor)));
+            _canvas.Focus();
+            var doc = Doc;
+            if (!commit || doc == null || name.Length == 0)
+                return;
+            if (_editingFolder)
             {
                 var store = FolderStore.Load(doc);
-                var name = Prompt("Rename Folder", "New name:", store.Folders[folder].Name);
-                if (name != null)
-                    store.RenameFolder(folder, name);
+                if (store.Folders.TryGetValue(_editing, out var folder) && folder.Name != name)
+                    store.RenameFolder(_editing, name);
             }
-            else if (view != Guid.Empty)
+            else
             {
-                var index = ViewOps.IndexOf(doc, view);
-                var name = index < 0 ? null : Prompt("Rename Named View", "New name:", doc.NamedViews[index].Name);
-                if (name != null && !ViewOps.Rename(doc, view, name))
+                var index = ViewOps.IndexOf(doc, _editing);
+                if (index >= 0 && doc.NamedViews[index].Name != name && !ViewOps.Rename(doc, _editing, name))
                     RhinoDialogs.ShowMessage($"There is already a named view called \"{name}\".", "Structured Views");
             }
-            Refresh();
+            Refresh(new[] { _editing });
         }
 
         void DuplicateSelected()
@@ -496,28 +573,76 @@ namespace StructuredViews
             Refresh(ViewOps.Paste(doc, folder));
         }
 
-        void ImportViews()
+        /// <summary>Import All (everything ticked) or Import Selected (nothing ticked): pick a .3dm, then what and where.</summary>
+        void ImportViews(bool all)
         {
             var doc = Doc;
             if (doc == null)
                 return;
-            var dialog = new Eto.Forms.OpenFileDialog { Title = "Import Named Views", Filters = { new FileFilter("Rhino 3D Models", ".3dm") } };
-            if (dialog.ShowDialog(this) != DialogResult.Ok)
+            var open = new Eto.Forms.OpenFileDialog { Title = all ? "Import All Named Views" : "Import Selected Named Views", Filters = { new FileFilter("Rhino 3D Models", ".3dm") } };
+            if (open.ShowDialog(this) != DialogResult.Ok)
                 return;
-            Guid folder;
+            Rhino.FileIO.File3dm file;
             try
             {
-                folder = ViewOps.Import(doc, dialog.FileName, _canvas.TargetFolder);
+                file = ViewOps.ReadFile(open.FileName);
             }
             catch (Exception ex)
             {
                 RhinoDialogs.ShowMessage(ex.Message, "Structured Views");
                 return;
             }
-            if (folder == Guid.Empty)
+            if (file.NamedViews.Count == 0)
+            {
                 RhinoDialogs.ShowMessage("That file has no named views.", "Structured Views");
-            else
-                Refresh(new[] { folder });
+                return;
+            }
+            var name = Path.GetFileNameWithoutExtension(open.FileName);
+            var target = _canvas.TargetFolder;
+            var store = FolderStore.Load(doc);
+            var targetName = store.Folders.TryGetValue(target, out var targetFolder) ? $"the folder \"{targetFolder.Name}\"" : "the top level";
+            var dialog = new ImportDialog(file, name, targetName, all);
+            if (!dialog.ShowModal(this))
+                return;
+            var folder = ViewOps.Import(doc, file, name, target, new ViewOps.ImportOptions { Views = dialog.Views, IntoNewFolder = dialog.IntoNewFolder, Replace = dialog.Replace });
+            if (folder == null)
+                return;
+            _canvas.Collapsed.Remove(folder.Value);
+            Refresh(folder.Value == Guid.Empty ? null : new[] { folder.Value });
+        }
+
+        /// <summary>Export Selected (the selected views and folders, with everything inside) or Export All, to a .3dm.</summary>
+        void ExportViews(bool all)
+        {
+            var doc = Doc;
+            if (doc == null)
+                return;
+            var views = _canvas.SelectedViews.ToList();
+            var folders = _canvas.SelectedFolders.ToList();
+            if (!all && views.Count + folders.Count == 0)
+            {
+                RhinoDialogs.ShowMessage("Select the views or folders to export.", "Structured Views");
+                return;
+            }
+            var stem = string.IsNullOrEmpty(doc.Name) ? "Untitled" : Path.GetFileNameWithoutExtension(doc.Name);
+            var save = new Eto.Forms.SaveFileDialog
+            {
+                Title = all ? "Export All Named Views" : "Export Selected Named Views",
+                Filters = { new FileFilter("Rhino 3D Models", ".3dm") },
+                FileName = stem + " named views.3dm",
+            };
+            if (save.ShowDialog(this) != DialogResult.Ok)
+                return;
+            var path = save.FileName.EndsWith(".3dm", StringComparison.OrdinalIgnoreCase) ? save.FileName : save.FileName + ".3dm";
+            try
+            {
+                var count = all ? ViewOps.ExportAll(doc, path) : ViewOps.Export(doc, path, views, folders);
+                RhinoApp.WriteLine("Structured Views: exported {0} named view{1} to {2}", count, count == 1 ? "" : "s", path);
+            }
+            catch (Exception ex)
+            {
+                RhinoDialogs.ShowMessage(ex.Message, "Structured Views");
+            }
         }
 
         void MoveSelected(Guid folder)
@@ -609,7 +734,7 @@ namespace StructuredViews
                     Item("To New Floating Viewport", () => RestoreFloating(one), one != Guid.Empty)));
                 menu.Items.Add(Item("Update to Current Viewport", () => UpdateView(one), one != Guid.Empty));
                 menu.Items.Add(new SeparatorMenuItem());
-                menu.Items.Add(Item("Rename…", RenameSelected, views.Count + folders.Count == 1));
+                menu.Items.Add(Item("Rename", RenameSelected, views.Count + folders.Count == 1));
                 menu.Items.Add(Item("Duplicate", DuplicateSelected, views.Count > 0));
                 menu.Items.Add(Item("Delete…", DeleteSelected));
                 menu.Items.Add(Item("Properties…", () => ShowProperties(one), one != Guid.Empty));
@@ -622,7 +747,8 @@ namespace StructuredViews
             menu.Items.Add(new SeparatorMenuItem());
             menu.Items.Add(Item("Save Current Viewport as Named View…", SaveView));
             menu.Items.Add(Item("New Folder…", NewFolder));
-            menu.Items.Add(Item("Import Named Views from 3dm File…", ImportViews));
+            menu.Items.Add(new SeparatorMenuItem());
+            menu.Items.AddRange(TransferItems());
             menu.Items.Add(new SeparatorMenuItem());
             menu.Items.Add(Sub("View Mode", ViewModeItems()));
             menu.Items.Add(Sub("Sort By", SortItems()));
@@ -642,10 +768,31 @@ namespace StructuredViews
             return move;
         }
 
+        MenuItem[] TransferItems()
+        {
+            var selected = _canvas.SelectedViews.Any() || _canvas.SelectedFolders.Any();
+            return new MenuItem[]
+            {
+                Item("Import All…", () => ImportViews(true)),
+                Item("Import Selected…", () => ImportViews(false)),
+                new SeparatorMenuItem(),
+                Item("Export Selected…", () => ExportViews(false), selected),
+                Item("Export All…", () => ExportViews(true)),
+            };
+        }
+
+        ContextMenu TransferMenu()
+        {
+            var menu = new ContextMenu();
+            menu.Items.AddRange(TransferItems());
+            return menu;
+        }
+
         MenuItem[] ViewModeItems() => new MenuItem[]
         {
             Check("Thumbnails", Settings.ViewMode == ViewMode.Thumbnails, () => Settings.ViewMode = ViewMode.Thumbnails),
             Check("List", Settings.ViewMode == ViewMode.List, () => Settings.ViewMode = ViewMode.List),
+            Check("Names Only", Settings.ViewMode == ViewMode.Names, () => Settings.ViewMode = ViewMode.Names),
             new SeparatorMenuItem(),
             Check("Small", Settings.ThumbnailSize == ThumbnailSize.Small, () => Settings.ThumbnailSize = ThumbnailSize.Small),
             Check("Medium", Settings.ThumbnailSize == ThumbnailSize.Medium, () => Settings.ThumbnailSize = ThumbnailSize.Medium),
@@ -700,8 +847,6 @@ namespace StructuredViews
                 RestoreView(views[0]);
             else if (key == Keys.Delete || key == Keys.Backspace)
                 DeleteSelected();
-            else if (key == Keys.F2)
-                RenameSelected();
             else if (key == (command | Keys.D))
                 DuplicateSelected();
             else if (key == (command | Keys.C))

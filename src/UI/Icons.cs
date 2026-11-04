@@ -5,7 +5,7 @@ using Eto.Forms;
 
 namespace StructuredViews
 {
-    public enum Icon { SaveView, NewFolder, Restore, Delete, Copy, Paste, Import, Duplicate, MoveUp, MoveDown, Thumbnails, List, More, Camera }
+    public enum Icon { SaveView, NewFolder, Restore, Delete, Copy, Paste, ImportExport, Duplicate, MoveUp, MoveDown, Thumbnails, List, Names, More, Camera }
 
     /// <summary>Line icons drawn as paths on a 16×16 grid, so they stay sharp and follow the theme colour.</summary>
     public static class Icons
@@ -53,10 +53,13 @@ namespace StructuredViews
                     g.DrawPath(pen, GraphicsPath.GetRoundRect(new RectangleF(4.5f, 1.5f, 6f, 3f), 1f));
                     g.DrawPath(pen, GraphicsPath.GetRoundRect(new RectangleF(7.5f, 7f, 7f, 7.5f), 1.2f));
                     break;
-                case Icon.Import:
+                case Icon.ImportExport:
+                    // A tray with one arrow in and one out.
                     g.DrawPath(pen, Polyline(2f, 9.5f, 2f, 13.5f, 14f, 13.5f, 14f, 9.5f));
-                    g.DrawLine(pen, 8f, 2f, 8f, 10f);
-                    g.DrawPath(pen, Polyline(5f, 7f, 8f, 10f, 11f, 7f));
+                    g.DrawLine(pen, 5.5f, 2f, 5.5f, 10f);
+                    g.DrawPath(pen, Polyline(3.5f, 8f, 5.5f, 10f, 7.5f, 8f));
+                    g.DrawLine(pen, 10.5f, 10f, 10.5f, 2f);
+                    g.DrawPath(pen, Polyline(8.5f, 4f, 10.5f, 2f, 12.5f, 4f));
                     break;
                 case Icon.Duplicate:
                     g.DrawPath(pen, GraphicsPath.GetRoundRect(new RectangleF(1.5f, 1.5f, 9f, 9f), 2f));
@@ -78,6 +81,10 @@ namespace StructuredViews
                         g.DrawPath(pen, GraphicsPath.GetRoundRect(new RectangleF(1.5f, y - 1.5f, 3.5f, 3f), 0.6f));
                         g.DrawLine(pen, 7.5f, y, 14.5f, y);
                     }
+                    break;
+                case Icon.Names:
+                    foreach (var y in new[] { 3.5f, 8f, 12.5f })
+                        g.DrawLine(pen, 2f, y, 14f, y);
                     break;
                 case Icon.More:
                     foreach (var x in new[] { 3.5f, 8f, 12.5f })

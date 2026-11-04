@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using Eto.Drawing;
 using Eto.Forms;
 using Rhino.Geometry;
@@ -116,5 +118,154 @@ namespace StructuredViews
         }
 
         static Label Centered(string text) => new Label { Text = text, TextAlignment = TextAlignment.Center };
+    }
+
+    /// <summary>
+    /// What to import from a .3dm: the file's folders and named views with checkboxes (a folder's box
+    /// switches everything inside it), where to put them, and what to do with names that already exist.
+    /// </summary>
+    public sealed class ImportDialog : Dialog<bool>
+    {
+        sealed class Node : TreeGridItem
+        {
+            public Guid Id;
+            public bool IsFolder;
+            public string Name;
+            public bool Checked;
+            public string Label => IsFolder ? Name + "  (" + Views().Count() + ")" : Name;
+
+            public IEnumerable<Node> Views()
+            {
+                foreach (Node child in Children)
+                {
+                    if (!child.IsFolder)
+                        yield return child;
+                    else
+                        foreach (var view in child.Views())
+                            yield return view;
+                }
+            }
+
+            public void SetChecked(bool value)
+            {
+                Checked = value;
+                foreach (Node child in Children)
+                    child.SetChecked(value);
+            }
+        }
+
+        readonly TreeGridItemCollection _roots = new TreeGridItemCollection();
+        readonly RadioButton _newFolder;
+        readonly RadioButton _replace;
+
+        /// <summary>Source ids of the checked views, or null when everything is checked (then empty folders come too).</summary>
+        public ICollection<Guid> Views { get; private set; }
+        public bool IntoNewFolder => _newFolder.Checked;
+        public bool Replace => _replace.Checked;
+
+        public ImportDialog(Rhino.FileIO.File3dm file, string fileName, string targetName, bool checkAll)
+        {
+            Title = checkAll ? "Import All Named Views" : "Import Selected Named Views";
+            Resizable = true;
+            Padding = new Padding(14);
+            MinimumSize = new Size(420, 520);
+
+            // The file's structure, as Structured Views stores it.
+            var source = FolderStore.Load(file);
+            var folderNodes = new Dictionary<Guid, Node>();
+            void AddFolders(Guid parent, TreeGridItemCollection into)
+            {
+                foreach (var folder in source.ChildFolders(parent).OrderBy(f => f.Order).ThenBy(f => f.Name, NaturalComparer.Instance))
+                {
+                    var node = new Node { Id = folder.Id, IsFolder = true, Name = folder.Name, Expanded = true };
+                    folderNodes[folder.Id] = node;
+                    AddFolders(folder.Id, node.Children);
+                    into.Add(node);
+                }
+            }
+            var loose = new List<Node>();
+            AddFolders(Guid.Empty, _roots);
+            var views = file.NamedViews
+                .Select((v, i) => new { v.NamedViewId, v.Name, Index = i, Order = source.OrderOf(v.NamedViewId) })
+                .OrderBy(x => double.IsNaN(x.Order) ? double.MaxValue : x.Order)
+                .ThenBy(x => x.Index);
+            foreach (var view in views)
+            {
+                var node = new Node { Id = view.NamedViewId, Name = view.Name };
+                if (folderNodes.TryGetValue(source.FolderOf(view.NamedViewId), out var folder))
+                    folder.Children.Insert(folder.Children.OfType<Node>().Count(n => !n.IsFolder), node);
+                else
+                    loose.Add(node);
+            }
+            for (int i = 0; i < loose.Count; i++)
+                _roots.Insert(i, loose[i]);
+            foreach (Node node in _roots)
+                node.SetChecked(checkAll);
+
+            // Names first: the tree indents its first column, so the checkboxes get a column of their own on
+            // the right, where they all line up instead of being pushed (and clipped) by the indentation.
+            var tree = new TreeGridView { ShowHeader = false, Height = 280, DataStore = _roots };
+            tree.Columns.Add(new GridColumn { DataCell = new TextBoxCell { Binding = Binding.Delegate<Node, string>(n => n.Label) }, Expand = true });
+            tree.Columns.Add(new GridColumn
+            {
+                DataCell = new CheckBoxCell { Binding = Binding.Delegate<Node, bool?>(n => n.Checked, (n, v) => n.SetChecked(v == true)) },
+                Editable = true,
+                Width = 32,
+            });
+            tree.CellEdited += (s, e) => tree.ReloadData();
+
+            Button Small(string text, bool value)
+            {
+                var button = new Button { Text = text };
+                button.Click += (s, e) =>
+                {
+                    foreach (Node node in _roots)
+                        node.SetChecked(value);
+                    tree.ReloadData();
+                };
+                return button;
+            }
+
+            _newFolder = new RadioButton { Text = "In a new folder \"" + fileName + "\"", Checked = true };
+            var intoTarget = new RadioButton(_newFolder) { Text = "Into " + targetName };
+            var keepBoth = new RadioButton { Text = "Keep both (the import gets a number)", Checked = true };
+            _replace = new RadioButton(keepBoth) { Text = "Replace the existing view" };
+
+            DefaultButton = new Button { Text = "Import" };
+            AbortButton = new Button { Text = "Cancel" };
+            DefaultButton.Click += (s, e) =>
+            {
+                var all = _roots.OfType<Node>().SelectMany(n => n.IsFolder ? n.Views() : new[] { n }).ToList();
+                var picked = all.Where(n => n.Checked).ToList();
+                if (picked.Count == 0)
+                {
+                    MessageBox.Show(this, "Tick the views to import.", "Structured Views");
+                    return;
+                }
+                Views = picked.Count == all.Count ? null : new HashSet<Guid>(picked.Select(n => n.Id));
+                Close(true);
+            };
+            AbortButton.Click += (s, e) => Close(false);
+
+            // A heading on the left: a label next to an empty cell that takes the rest of the width.
+            Control Heading(string text) => new TableLayout(new TableRow(new Label { Text = text, Font = SystemFonts.Bold() }, null));
+            Content = new TableLayout
+            {
+                Spacing = new Size(8, 8),
+                Rows =
+                {
+                    Heading(fileName + ".3dm"),
+                    new TableRow(tree) { ScaleHeight = true },
+                    new TableLayout(new TableRow(Small("Select All", true), Small("Select None", false), null)) { Spacing = new Size(6, 0) },
+                    Heading("Put the views"),
+                    _newFolder,
+                    intoTarget,
+                    Heading("If a view with the same name exists"),
+                    keepBoth,
+                    _replace,
+                    new TableLayout(new TableRow(null, AbortButton, DefaultButton)) { Spacing = new Size(8, 0) },
+                },
+            };
+        }
     }
 }

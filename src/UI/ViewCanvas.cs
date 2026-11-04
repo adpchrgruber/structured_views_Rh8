@@ -91,6 +91,10 @@ namespace StructuredViews
         RectangleF _dropMarker;
         HeaderElement _dropHeader;
         Guid _anchor;
+        bool _swallowMouseDown;
+
+        /// <summary>The view or folder whose name is being edited in place; its own label is not drawn.</summary>
+        public Guid EditingId { get; set; }
 
         readonly Dictionary<(string, int, Font), string> _fitCache = new Dictionary<(string, int, Font), string>();
         readonly Font _labelFont = SystemFonts.Default(11);
@@ -108,6 +112,8 @@ namespace StructuredViews
         public Func<Guid, Image> ImageFor { get; set; } = _ => null;
 
         public event Action<Guid> ViewActivated;
+        /// <summary>Asks the panel to open an in-place editor: item id, whether it is a folder, editor bounds, current name.</summary>
+        public event Action<Guid, bool, RectangleF, string> RenameRequested;
         public event Action<PointF> MenuRequested;
         public event Action<DropRequest> DropRequested;
         public event Action SelectionChanged;
@@ -119,12 +125,25 @@ namespace StructuredViews
 
         public Structure Structure => _structure;
 
+        float _minimumHeight;
+
+        /// <summary>The visible height of the scroll area. The canvas is never shorter, so every click on
+        /// empty space lands on it (and clears the selection) instead of on the scroll area behind it.</summary>
+        public float MinimumHeight
+        {
+            get => _minimumHeight;
+            set
+            {
+                if (Math.Abs(value - _minimumHeight) < 0.5f)
+                    return;
+                _minimumHeight = value;
+                Relayout();
+            }
+        }
+
         public void SetStructure(Structure structure)
         {
             _structure = structure;
-            var alive = new HashSet<Guid>(structure.AllViews().Select(v => v.Id).Concat(structure.FolderNodes.Keys));
-            if (Selection.RemoveWhere(id => !alive.Contains(id)) > 0)
-                SelectionChanged?.Invoke();
             Relayout();
         }
 
@@ -176,6 +195,19 @@ namespace StructuredViews
             Relayout();
         }
 
+        Scrollable ScrollArea
+        {
+            get
+            {
+                for (var parent = Parent; parent != null; parent = parent.Parent)
+                {
+                    if (parent is Scrollable scroll)
+                        return scroll;
+                }
+                return null;
+            }
+        }
+
         static RectangleF Inflated(RectangleF r, float dx, float dy) => new RectangleF(r.X - dx, r.Y - dy, r.Width + 2 * dx, r.Height + 2 * dy);
 
         static Guid IdOf(Element e) => e is HeaderElement h ? h.Id : e is ViewElement v ? v.View.Id : Guid.Empty;
@@ -209,7 +241,12 @@ namespace StructuredViews
                 // Dropping anywhere outside a folder means the top level.
                 root.HitBounds = new RectangleF(0, 0, width, (_headers.Count > 0 ? _headers[0].Bounds.Top : y) + 2);
             }
-            var height = (int)Math.Ceiling(Math.Max(y + Pad, 60));
+            // Only what is on screen stays selected (deleted items, and items in collapsed folders, drop out),
+            // so Delete or Move never act on something out of sight.
+            var visible = new HashSet<Guid>(_order.Select(IdOf));
+            if (Selection.RemoveWhere(id => !visible.Contains(id)) > 0)
+                SelectionChanged?.Invoke();
+            var height = (int)Math.Ceiling(Math.Max(Math.Max(y + Pad, 60), _minimumHeight));
             if (Height != height)
                 Height = height;
             Invalidate();
@@ -278,7 +315,7 @@ namespace StructuredViews
                 var rows = (views.Count + columns - 1) / columns;
                 y += rows * (thumbHeight + LabelHeight) + Math.Max(0, rows - 1) * Gap;
             }
-            else
+            else if (_mode == ViewMode.List)
             {
                 var rowHeight = _size == ThumbnailSize.Small ? 22f : _size == ThumbnailSize.Large ? 40f : 28f;
                 var thumbHeight = rowHeight - 6;
@@ -288,6 +325,19 @@ namespace StructuredViews
                     var ry = y + i * rowHeight;
                     AddView(section, views[i], new RectangleF(left + 3, ry + 3, thumbWidth, thumbHeight),
                         new RectangleF(left + thumbWidth + 10, ry, available - thumbWidth - 12, rowHeight),
+                        new RectangleF(left, ry, available, rowHeight));
+                }
+                y += views.Count * rowHeight;
+            }
+            else
+            {
+                // Names only: compact text rows, no thumbnail.
+                const float rowHeight = 22f;
+                for (int i = 0; i < views.Count; i++)
+                {
+                    var ry = y + i * rowHeight;
+                    AddView(section, views[i], RectangleF.Empty,
+                        new RectangleF(left + 8, ry, available - 12, rowHeight),
                         new RectangleF(left, ry, available, rowHeight));
                 }
                 y += views.Count * rowHeight;
@@ -424,7 +474,8 @@ namespace StructuredViews
             var countWidth = _countFont.MeasureString(count).Width;
             var nameLeft = header.TextLeft + 15;
             var name = Fit(_headerFont, header.Node.Folder.Name, b.Right - 10 - countWidth - nameLeft - 8);
-            g.DrawText(_headerFont, Text, nameLeft, cy - _headerFont.LineHeight / 2, name);
+            if (header.Id != EditingId)
+                g.DrawText(_headerFont, Text, nameLeft, cy - _headerFont.LineHeight / 2, name);
             g.DrawText(_countFont, Faint(0.5f), b.Right - 10 - countWidth, cy - _countFont.LineHeight / 2, count);
         }
 
@@ -452,6 +503,8 @@ namespace StructuredViews
             if (selected)
                 g.DrawPath(new Pen(focused ? Accent : Faint(0.45f), 2.5f), GraphicsPath.GetRoundRect(Inflated(thumb, 1.5f, 1.5f), 5.5f));
 
+            if (view.View.Id == EditingId)
+                return;
             var label = Fit(_labelFont, view.View.Name, view.Label.Width - 8);
             var size = _labelFont.MeasureString(label);
             var tx = view.Label.MiddleX - size.Width / 2;
@@ -473,19 +526,24 @@ namespace StructuredViews
                 g.FillPath(focused ? Accent : Faint(0.14f), GraphicsPath.GetRoundRect(row, 5));
             else if (_hover == view)
                 g.FillPath(Faint(0.06f), GraphicsPath.GetRoundRect(row, 5));
-            var frame = GraphicsPath.GetRoundRect(view.Thumb, 2);
-            var image = ImageFor(view.View.Id);
-            if (image != null)
+            if (_mode == ViewMode.List)
             {
-                g.SaveTransform();
-                g.SetClip(frame);
-                g.DrawImage(image, view.Thumb);
-                g.ResetClip();
-                g.RestoreTransform();
+                var frame = GraphicsPath.GetRoundRect(view.Thumb, 2);
+                var image = ImageFor(view.View.Id);
+                if (image != null)
+                {
+                    g.SaveTransform();
+                    g.SetClip(frame);
+                    g.DrawImage(image, view.Thumb);
+                    g.ResetClip();
+                    g.RestoreTransform();
+                }
+                else
+                    g.FillPath(Faint(0.08f), frame);
+                g.DrawPath(new Pen(selected && focused ? new Color(Theme.AccentText, 0.4f) : Faint(0.14f), 1), frame);
             }
-            else
-                g.FillPath(Faint(0.08f), frame);
-            g.DrawPath(new Pen(selected && focused ? new Color(Theme.AccentText, 0.4f) : Faint(0.14f), 1), frame);
+            if (view.View.Id == EditingId)
+                return;
             var label = Fit(_listFont, view.View.Name, view.Label.Width);
             g.DrawText(_listFont, selected && focused ? Theme.AccentText : Text, view.Label.X, view.Label.MiddleY - _listFont.LineHeight / 2, label);
         }
@@ -568,6 +626,13 @@ namespace StructuredViews
 
         protected override void OnMouseDown(MouseEventArgs e)
         {
+            // Eto (Mac) follows a double-click with a mouse-down for the same click; when the double-click
+            // already did something (rename, restore, open/close), that mouse-down must not run.
+            if (_swallowMouseDown)
+            {
+                _swallowMouseDown = false;
+                return;
+            }
             base.OnMouseDown(e);
             Focus();
             var hit = HitTest(e.Location);
@@ -677,22 +742,77 @@ namespace StructuredViews
         }
 
         // A real double-click lands on what its first click selected. A quick second click on something else
-        // (or on a chevron, which doesn't select) arrives as a double-click too and is handled as a plain click.
+        // (or on a chevron, which doesn't select) arrives as a double-click too and is left to the mouse-down
+        // that follows it, as a plain click.
         protected override void OnMouseDoubleClick(MouseEventArgs e)
         {
             base.OnMouseDoubleClick(e);
             var hit = HitTest(e.Location);
             var onChevron = hit is HeaderElement h && e.Location.X < h.TextLeft + 14;
             if (hit == null || onChevron || IsContextClick(e) || !Selection.Contains(IdOf(hit)))
-            {
-                OnMouseDown(e);
                 return;
-            }
+            _swallowMouseDown = true;
             if (hit is ViewElement view)
-                ViewActivated?.Invoke(view.View.Id);
+            {
+                if (NameBounds(view).Contains(e.Location))
+                    BeginRename(view.View.Id);
+                else
+                    ViewActivated?.Invoke(view.View.Id);
+            }
             else if (hit is HeaderElement header)
-                ToggleFolder(header.Id);
+            {
+                if (NameBounds(header).Contains(e.Location))
+                    BeginRename(header.Id);
+                else
+                    ToggleFolder(header.Id);
+            }
         }
+
+        #region Renaming
+
+        /// <summary>Opens the in-place editor for a view or folder (the menu, or a double-click on its name).</summary>
+        public void BeginRename(Guid id)
+        {
+            var element = _order.FirstOrDefault(el => IdOf(el) == id);
+            if (element == null)
+                return;
+            Select(new[] { id });
+            if (element is HeaderElement header)
+            {
+                var left = header.TextLeft + 11;
+                var box = new RectangleF(left, header.Bounds.MiddleY - 11, header.Bounds.Right - 30 - left, 22);
+                RenameRequested?.Invoke(id, true, box, header.Node.Folder.Name);
+            }
+            else if (element is ViewElement view)
+            {
+                var box = _mode == ViewMode.Thumbnails
+                    ? new RectangleF(view.Label.X, view.Label.MiddleY - 11, view.Label.Width, 22)
+                    : new RectangleF(view.Label.X - 4, view.Bounds.MiddleY - 11, view.Bounds.Right - view.Label.X + 2, 22);
+                RenameRequested?.Invoke(id, false, box, view.View.Name);
+            }
+        }
+
+        /// <summary>Where a view's name is drawn (the part a double-click renames).</summary>
+        RectangleF NameBounds(ViewElement view)
+        {
+            if (_mode == ViewMode.Thumbnails)
+            {
+                var w = _labelFont.MeasureString(Fit(_labelFont, view.View.Name, view.Label.Width - 8)).Width;
+                return new RectangleF(view.Label.MiddleX - w / 2 - 6, view.Label.Y - 2, w + 12, view.Label.Height + 4);
+            }
+            var width = _listFont.MeasureString(Fit(_listFont, view.View.Name, view.Label.Width)).Width;
+            return new RectangleF(view.Label.X - 4, view.Bounds.Y, width + 12, view.Bounds.Height);
+        }
+
+        /// <summary>Where a folder's name is drawn in its header.</summary>
+        RectangleF NameBounds(HeaderElement header)
+        {
+            var left = header.TextLeft + 15;
+            var width = _headerFont.MeasureString(header.Node.Folder.Name).Width;
+            return new RectangleF(left - 4, header.Bounds.Y, Math.Min(width + 12, header.Bounds.Right - left), header.Bounds.Height);
+        }
+
+        #endregion
 
         protected override void OnLostFocus(EventArgs e)
         {
@@ -733,7 +853,8 @@ namespace StructuredViews
 
         void AutoScroll(PointF p)
         {
-            if (!(Parent is Scrollable scroll))
+            var scroll = ScrollArea;
+            if (scroll == null)
                 return;
             var visible = scroll.VisibleRect;
             var position = scroll.ScrollPosition;
@@ -746,7 +867,8 @@ namespace StructuredViews
         void ScrollToSelection()
         {
             var first = _order.FirstOrDefault(e => Selection.Contains(IdOf(e)));
-            if (first == null || !(Parent is Scrollable scroll))
+            var scroll = ScrollArea;
+            if (first == null || scroll == null)
                 return;
             var visible = scroll.VisibleRect;
             if (first.Bounds.Top < visible.Top)
@@ -826,7 +948,7 @@ namespace StructuredViews
         int InsertIndex(SectionElement section, PointF p)
         {
             var views = section.Views;
-            if (_mode == ViewMode.List)
+            if (_mode != ViewMode.Thumbnails)
             {
                 var rowHeight = views[0].Bounds.Height;
                 return Math.Max(0, Math.Min(views.Count, (int)Math.Round((p.Y - views[0].Bounds.Top) / rowHeight)));
@@ -845,7 +967,7 @@ namespace StructuredViews
         RectangleF MarkerFor(SectionElement section, int index)
         {
             var views = section.Views;
-            if (_mode == ViewMode.List)
+            if (_mode != ViewMode.Thumbnails)
             {
                 var y = index < views.Count ? views[index].Bounds.Top : views[views.Count - 1].Bounds.Bottom;
                 return new RectangleF(section.Bounds.Left, y - 1, section.Bounds.Width, 2);
@@ -891,6 +1013,10 @@ namespace StructuredViews
                     _drop = null;
                     _pressed = null;
                     Invalidate();
+                    e.Handled = true;
+                    break;
+                case Keys.Escape when Selection.Count > 0:
+                    SelectOnly(Guid.Empty);
                     e.Handled = true;
                     break;
             }

@@ -339,8 +339,12 @@ namespace StructuredViews
             foreach (var id in views)
                 file.NamedViews.Add(doc.NamedViews[IndexOf(doc, id)]);
             store.WriteTo(file.Strings, folders, views);
-            if (!file.Write(path, 8))
+            // Built in memory and saved here: File3dm.Write(path) would record the full save path (which
+            // includes the user's home folder) inside the file.
+            var bytes = file.ToByteArray(new File3dmWriteOptions { Version = 8 });
+            if (bytes == null || bytes.Length == 0)
                 throw new IOException("Could not write " + Path.GetFileName(path) + ".");
+            File.WriteAllBytes(path, bytes);
             return views.Count;
         }
 

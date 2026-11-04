@@ -7,6 +7,15 @@
     <TargetExt>.rhp</TargetExt>
     <NoWarn>NU1701;CA1416</NoWarn>
     <LangVersion>latest</LangVersion>
+    <!-- Keep the build machine out of the published plug-in: map local source paths to a neutral root,
+         and write no debug-symbol path into Release builds (it would contain the user's home folder). -->
+    <Deterministic>true</Deterministic>
+    <PathMap>$(MSBuildProjectDirectory)=/_/</PathMap>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
   </PropertyGroup>
 
   <PropertyGroup>

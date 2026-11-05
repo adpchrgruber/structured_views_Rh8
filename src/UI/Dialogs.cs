@@ -163,7 +163,7 @@ namespace StructuredViews
         public bool IntoNewFolder => _newFolder.Checked;
         public bool Replace => _replace.Checked;
 
-        public ImportDialog(Rhino.FileIO.File3dm file, string fileName, string targetName, bool checkAll)
+        public ImportDialog(Rhino.FileIO.File3dm file, string fileName, bool checkAll)
         {
             Title = checkAll ? "Import All Named Views" : "Import Selected Named Views";
             Resizable = true;
@@ -226,8 +226,8 @@ namespace StructuredViews
                 return button;
             }
 
-            _newFolder = new RadioButton { Text = "In a new folder \"" + fileName + "\"", Checked = true };
-            var intoTarget = new RadioButton(_newFolder) { Text = "Into " + targetName };
+            _newFolder = new RadioButton { Text = "In a new folder \"" + fileName + "\" at the top level", Checked = true };
+            var intoTarget = new RadioButton(_newFolder) { Text = "Straight into the top level" };
             var keepBoth = new RadioButton { Text = "Keep both (the import gets a number)", Checked = true };
             _replace = new RadioButton(keepBoth) { Text = "Replace the existing view" };
 

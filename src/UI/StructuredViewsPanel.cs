@@ -626,13 +626,11 @@ namespace StructuredViews
                 return;
             }
             var name = Path.GetFileNameWithoutExtension(path);
-            var target = _canvas.TargetFolder;
-            var store = FolderStore.Load(doc);
-            var targetName = store.Folders.TryGetValue(target, out var targetFolder) ? $"the folder \"{targetFolder.Name}\"" : "the top level";
-            var dialog = new ImportDialog(file, name, targetName, all);
+            // Imports always land at the top level, whatever is selected, so they never end up nested by accident.
+            var dialog = new ImportDialog(file, name, all);
             if (!dialog.ShowModal(this))
                 return;
-            var folder = ViewOps.Import(doc, file, name, target, new ViewOps.ImportOptions { Views = dialog.Views, IntoNewFolder = dialog.IntoNewFolder, Replace = dialog.Replace });
+            var folder = ViewOps.Import(doc, file, name, Guid.Empty, new ViewOps.ImportOptions { Views = dialog.Views, IntoNewFolder = dialog.IntoNewFolder, Replace = dialog.Replace });
             if (folder == null)
                 return;
             _canvas.Collapsed.Remove(folder.Value);

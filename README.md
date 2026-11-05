@@ -30,7 +30,7 @@ Requires Rhino 8 on Mac or Windows. Tested on macOS (light and dark mode) and Wi
    or use the menu: *Tools › Package Manager…* (Mac), *Tools › Package Manager* (Windows).
 
 2. **Turn on pre-releases.** Tick **Include pre-releases** at the bottom left of the window.
-   Structured Views is a beta (`0.9.4-beta`), and beta versions are hidden without this box.
+   Structured Views is a beta (`0.9.5-beta`), and beta versions are hidden without this box.
 
 3. **Find it.** On the **Online** tab, type `StructuredViews` into the search field.
 
@@ -62,26 +62,26 @@ untouched.
 ### Other ways to install
 
 - **From the package file:** download
-  [`dist/structuredviews-0.9.4-beta-rh8_0-any.yak`](dist/) and drag it into a Rhino window. Restart
+  [`dist/structuredviews-0.9.5-beta-rh8_0-any.yak`](dist/) and drag it into a Rhino window. Restart
   Rhino.
 - **From the command line** (Rhino closed), with this repository checked out:
 
   Mac (Terminal):
 
   ```sh
-  "/Applications/Rhino 8.app/Contents/Resources/bin/yak" install --source ./dist StructuredViews 0.9.4-beta
+  "/Applications/Rhino 8.app/Contents/Resources/bin/yak" install --source ./dist StructuredViews 0.9.5-beta
   ```
 
   Windows (Command Prompt):
 
   ```bat
-  "C:\Program Files\Rhino 8\System\Yak.exe" install --source .\dist StructuredViews 0.9.4-beta
+  "C:\Program Files\Rhino 8\System\Yak.exe" install --source .\dist StructuredViews 0.9.5-beta
   ```
 
   Or straight from the package server, from any folder:
 
   ```sh
-  "/Applications/Rhino 8.app/Contents/Resources/bin/yak" install StructuredViews 0.9.4-beta
+  "/Applications/Rhino 8.app/Contents/Resources/bin/yak" install StructuredViews 0.9.5-beta
   ```
 
   Giving the version number makes sure yak installs this beta.
@@ -132,14 +132,15 @@ second row instead of hiding buttons.
 | Import | Import and Export button › **Import All…** or **Import Selected…** (tick what you want in the file's folder tree) |
 
 **Import and export.** An export is a .3dm that holds only the named views and their folders (no
-geometry, the document's units). Structured Views imports it with its folders; Rhino's own
-*NamedView › Import* reads the views too, without folders. Thumbnails are not exported, they are
-captured again after import. Only the named views and folders are read, never the geometry, so even a large model opens for import
-in a moment; a notice at the top of the panel shows while the file is read. When importing you choose where the views go — a new folder named after
-the file, or the selected folder — and what happens when a name already exists: **Keep both** (the
-import gets a number, "Roof 2") or **Replace** (the existing view takes the imported camera and keeps
-its place). Only folders that receive views are created; Import All also brings the file's empty
-folders.
+geometry, the document's units). Structured Views imports it with its folders; Rhino's own *NamedView ›
+Import* reads the views too, without folders. Thumbnails are not exported, they are captured again after
+import. Only the named views and folders are read, never the geometry, so even a large model opens for
+import in a moment; a notice at the top of the panel shows while the file is read. Imports always land
+at the top level, whatever is selected, so they never end up nested by accident; you choose between a
+new folder named after the file and straight into the top level, and what happens when a name already
+exists: **Keep both** (the import gets a number, "Roof 2") or **Replace** (the existing view takes the
+imported camera and keeps its place). Only folders that receive views are created; Import All also
+brings the file's empty folders.
 
 ## How it works
 

@@ -176,15 +176,6 @@ packs `dist/structuredviews-<version>-rh8_0-any.yak`. Icons are generated with `
 Rhino can't unload a plug-in: restart Rhino after rebuilding to pick up changes. Never copy a new build
 over a loaded `.rhp`; raise `<Version>` and install the new package instead.
 
-To publish a new version to the Rhino Package Manager:
-
-```sh
-yak login
-yak push dist/structuredviews-<version>-rh8_0-any.yak
-```
-
-A published version can't be replaced, only hidden with `yak yank`; raise `<Version>` for every release.
-
 ## Credits and AI disclosure
 
 Structured Views was co-created by **adpchrgruber** and generative AI.

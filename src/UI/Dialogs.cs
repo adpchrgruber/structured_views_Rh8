@@ -268,4 +268,46 @@ namespace StructuredViews
             };
         }
     }
+
+    /// <summary>
+    /// New Folder: a name, and (when something is selected) whether the selection moves into the folder.
+    /// With it, the folder takes the place of the first selected item.
+    /// </summary>
+    public sealed class NewFolderDialog : Dialog<bool>
+    {
+        readonly TextBox _name;
+        readonly CheckBox _move;
+
+        public string FolderName => (_name.Text ?? "").Trim();
+        public bool MoveSelection => _move?.Checked == true;
+
+        public NewFolderDialog(int selected)
+        {
+            Title = "New Folder";
+            Resizable = false;
+            Padding = new Padding(14);
+            MinimumSize = new Size(320, 0);
+
+            _name = new TextBox { Text = "New Folder" };
+            if (selected > 0)
+                _move = new CheckBox { Text = selected == 1 ? "Move the selected item into it" : $"Move the {selected} selected items into it", Checked = true };
+
+            DefaultButton = new Button { Text = "Create" };
+            AbortButton = new Button { Text = "Cancel" };
+            DefaultButton.Click += (s, e) => Close(FolderName.Length > 0);
+            AbortButton.Click += (s, e) => Close(false);
+            Shown += (s, e) =>
+            {
+                _name.Focus();
+                _name.SelectAll();
+            };
+
+            var layout = new TableLayout { Spacing = new Size(8, 10) };
+            layout.Rows.Add(new TableLayout(new TableRow(new Label { Text = "Name", VerticalAlignment = VerticalAlignment.Center }, new TableCell(_name, true))) { Spacing = new Size(8, 0) });
+            if (_move != null)
+                layout.Rows.Add(_move);
+            layout.Rows.Add(new TableLayout(new TableRow(null, AbortButton, DefaultButton)) { Spacing = new Size(8, 0) });
+            Content = layout;
+        }
+    }
 }

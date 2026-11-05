@@ -57,6 +57,7 @@ namespace StructuredViews
             public SectionElement Section;
         }
 
+        /// <summary>A run of consecutive views in one level (or an empty folder's placeholder).</summary>
         sealed class SectionElement : Element
         {
             public Guid Folder;
@@ -64,6 +65,15 @@ namespace StructuredViews
             public List<ViewElement> Views = new List<ViewElement>();
             public bool Placeholder;
             public RectangleF HitBounds;
+            /// <summary>The item right after this run in its level (a folder), or Guid.Empty at the end.</summary>
+            public Guid Next;
+        }
+
+        /// <summary>The area an open folder's contents take; a drop there that hits nothing else goes in.</summary>
+        sealed class ContainerElement : Element
+        {
+            public Guid Folder;
+            public HeaderElement Header;
         }
 
         #endregion
@@ -71,6 +81,7 @@ namespace StructuredViews
         Structure _structure;
         readonly List<HeaderElement> _headers = new List<HeaderElement>();
         readonly List<SectionElement> _sections = new List<SectionElement>();
+        readonly List<ContainerElement> _containers = new List<ContainerElement>();
         readonly List<Element> _order = new List<Element>();
         readonly List<(float X, float Top, float Bottom)> _guides = new List<(float, float, float)>();
         readonly List<float> _separators = new List<float>();
@@ -92,6 +103,11 @@ namespace StructuredViews
         HeaderElement _dropHeader;
         Guid _anchor;
         bool _swallowMouseDown;
+
+        // Holding the button on a view or folder (without moving) renames it, like a double-click on its name.
+        const double LongPressSeconds = 0.6;
+        UITimer _longPress;
+        Guid _longPressId;
 
         /// <summary>The view or folder whose name is being edited in place; its own label is not drawn.</summary>
         public Guid EditingId { get; set; }
@@ -159,6 +175,22 @@ namespace StructuredViews
 
         public IEnumerable<Guid> SelectedFolders => _headers.Select(h => h.Id).Where(Selection.Contains);
 
+        /// <summary>Selected views and folders in the order they are shown.</summary>
+        public List<Guid> SelectedItems => _order.Select(IdOf).Where(Selection.Contains).ToList();
+
+        string _notice;
+
+        /// <summary>A short message shown at the top of the visible area (e.g. while a file is read); null hides it.</summary>
+        public string Notice
+        {
+            get => _notice;
+            set
+            {
+                _notice = value;
+                Invalidate();
+            }
+        }
+
         /// <summary>The folder new items go to: the selected folder, or the folder of the selected view.</summary>
         public Guid TargetFolder
         {
@@ -225,6 +257,7 @@ namespace StructuredViews
         {
             _headers.Clear();
             _sections.Clear();
+            _containers.Clear();
             _order.Clear();
             _guides.Clear();
             _separators.Clear();
@@ -232,15 +265,9 @@ namespace StructuredViews
             _layoutWidth = Width;
             var width = Math.Max(120f, Width);
             float y = Pad;
-            _empty = _structure == null || (_structure.ViewCount == 0 && _structure.RootFolders.Count == 0);
+            _empty = _structure == null || _structure.RootItems.Count == 0;
             if (!_empty)
-            {
-                var root = LayoutViews(Guid.Empty, null, _structure.RootViews, 0, width, ref y);
-                foreach (var node in _structure.RootFolders)
-                    LayoutFolder(node, width, ref y);
-                // Dropping anywhere outside a folder means the top level.
-                root.HitBounds = new RectangleF(0, 0, width, (_headers.Count > 0 ? _headers[0].Bounds.Top : y) + 2);
-            }
+                LayoutLevel(Guid.Empty, null, _structure.RootItems, 0, width, ref y);
             // Only what is on screen stays selected (deleted items, and items in collapsed folders, drop out),
             // so Delete or Move never act on something out of sight.
             var visible = new HashSet<Guid>(_order.Select(IdOf));
@@ -252,14 +279,40 @@ namespace StructuredViews
             Invalidate();
         }
 
+        /// <summary>
+        /// Lays out one level in its order: consecutive views form a grid (or rows), a folder ends the run
+        /// and the views after it start a new one. At the top level a hairline sets runs and folders apart.
+        /// </summary>
+        void LayoutLevel(Guid folder, HeaderElement header, List<IItem> items, int depth, float width, ref float y)
+        {
+            for (int i = 0; i < items.Count;)
+            {
+                if (items[i] is FolderNode node)
+                {
+                    LayoutFolder(node, width, ref y);
+                    i++;
+                    continue;
+                }
+                var run = items.Skip(i).TakeWhile(item => item is ViewEntry).Cast<ViewEntry>().ToList();
+                i += run.Count;
+                if (depth == 0 && _order.Count > 0)
+                    Separator(ref y);
+                var section = LayoutViews(folder, header, run, depth, width, ref y);
+                section.Next = i < items.Count ? items[i].Id : Guid.Empty;
+            }
+        }
+
+        void Separator(ref float y)
+        {
+            y += 4;
+            _separators.Add(y);
+            y += 4;
+        }
+
         void LayoutFolder(FolderNode node, float width, ref float y)
         {
-            if (node.Depth == 0 && (_headers.Count > 0 || _order.Count > 0))
-            {
-                y += 4;
-                _separators.Add(y);
-                y += 4;
-            }
+            if (node.Depth == 0 && _order.Count > 0)
+                Separator(ref y);
             var expanded = !Collapsed.Contains(node.Folder.Id);
             var header = new HeaderElement
             {
@@ -275,16 +328,23 @@ namespace StructuredViews
                 return;
 
             var top = y;
-            var section = LayoutViews(node.Folder.Id, header, node.Views, node.Depth + 1, width, ref y);
-            section.Placeholder = node.Views.Count == 0 && node.Children.Count == 0;
-            if (section.Placeholder)
+            if (node.Items.Count == 0)
             {
-                section.Bounds = new RectangleF(Pad + (node.Depth + 1) * Indent, y, width - 2 * Pad - (node.Depth + 1) * Indent, 24);
+                var left = Pad + (node.Depth + 1) * Indent;
+                var placeholder = new SectionElement
+                {
+                    Folder = node.Id,
+                    Header = header,
+                    Placeholder = true,
+                    Bounds = new RectangleF(left, y, width - Pad - left, 24),
+                };
+                placeholder.HitBounds = new RectangleF(0, y, width, 24);
+                _sections.Add(placeholder);
                 y += 28;
             }
-            section.HitBounds = new RectangleF(0, top, width, Math.Max(y - top, 6));
-            foreach (var child in node.Children)
-                LayoutFolder(child, width, ref y);
+            else
+                LayoutLevel(node.Id, header, node.Items, node.Depth + 1, width, ref y);
+            _containers.Add(new ContainerElement { Folder = node.Id, Header = header, Bounds = new RectangleF(0, top, width, Math.Max(y - top, 6)) });
             _guides.Add((Pad + node.Depth * Indent + 4.5f, top, y - 4));
         }
 
@@ -345,7 +405,7 @@ namespace StructuredViews
             if (views.Count > 0)
                 y += 8;
             section.Bounds = new RectangleF(left, top, available, y - top);
-            section.HitBounds = section.Bounds;
+            section.HitBounds = new RectangleF(0, top, width, y - top);
             return section;
         }
 
@@ -389,6 +449,8 @@ namespace StructuredViews
             if (_empty)
             {
                 PaintEmptyState(g);
+                if (!string.IsNullOrEmpty(_notice))
+                    PaintNotice(g);
                 return;
             }
 
@@ -431,6 +493,20 @@ namespace StructuredViews
             }
             if (_dragging)
                 PaintDragBadge(g);
+            if (!string.IsNullOrEmpty(_notice))
+                PaintNotice(g);
+        }
+
+        /// <summary>A pill at the top of the visible area, over the content.</summary>
+        void PaintNotice(Graphics g)
+        {
+            var scroll = ScrollArea;
+            var top = (scroll?.ScrollPosition.Y ?? 0) + 8f;
+            var text = Fit(_labelFont, _notice, Width - 4 * Pad);
+            var size = _labelFont.MeasureString(text);
+            var box = new RectangleF((Width - size.Width) / 2 - 12, top, size.Width + 24, size.Height + 10);
+            g.FillPath(new Color(Accent, 0.95f), GraphicsPath.GetRoundRect(box, box.Height / 2));
+            g.DrawText(_labelFont, Theme.AccentText, box.X + 12, box.Y + 5, text);
         }
 
         void PaintEmptyState(Graphics g)
@@ -662,6 +738,8 @@ namespace StructuredViews
             _pressed = hit;
             _pressPoint = e.Location;
             _pressWasSelected = hit != null && Selection.Contains(id);
+            if (hit != null && (modifiers & (Keys.Shift | Application.Instance.CommonModifier | Keys.Alt)) == 0)
+                StartLongPress(id);
             if (hit == null)
             {
                 if ((modifiers & (Keys.Shift | Application.Instance.CommonModifier)) == 0)
@@ -691,7 +769,10 @@ namespace StructuredViews
             if (_pressed != null && e.Buttons == MouseButtons.Primary)
             {
                 if (!_dragging && (Math.Abs(e.Location.X - _pressPoint.X) > DragThreshold || Math.Abs(e.Location.Y - _pressPoint.Y) > DragThreshold))
+                {
+                    StopLongPress();
                     _dragging = Selection.Contains(IdOf(_pressed));
+                }
                 if (_dragging)
                 {
                     _dragPoint = e.Location;
@@ -713,6 +794,7 @@ namespace StructuredViews
         protected override void OnMouseUp(MouseEventArgs e)
         {
             base.OnMouseUp(e);
+            StopLongPress();
             var pressed = _pressed;
             _pressed = null;
             if (_dragging)
@@ -751,6 +833,7 @@ namespace StructuredViews
             var onChevron = hit is HeaderElement h && e.Location.X < h.TextLeft + 14;
             if (hit == null || onChevron || IsContextClick(e) || !Selection.Contains(IdOf(hit)))
                 return;
+            StopLongPress();
             _swallowMouseDown = true;
             if (hit is ViewElement view)
             {
@@ -769,6 +852,41 @@ namespace StructuredViews
         }
 
         #region Renaming
+
+        void StartLongPress(Guid id)
+        {
+            StopLongPress();
+            _longPressId = id;
+            _longPress = new UITimer { Interval = LongPressSeconds };
+            _longPress.Elapsed += (s, e) =>
+            {
+                var target = _longPressId;
+                StopLongPress();
+                try
+                {
+                    // Still held on the same item and not dragging: rename it.
+                    if (!_dragging && _pressed != null && IdOf(_pressed) == target && Mouse.Buttons == MouseButtons.Primary)
+                    {
+                        _pressed = null;
+                        BeginRename(target);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Rhino.RhinoApp.WriteLine("Structured Views: rename failed: " + ex.Message);
+                }
+            };
+            _longPress.Start();
+        }
+
+        void StopLongPress()
+        {
+            if (_longPress == null)
+                return;
+            _longPress.Stop();
+            _longPress.Dispose();
+            _longPress = null;
+        }
 
         /// <summary>Opens the in-place editor for a view or folder (the menu, or a double-click on its name).</summary>
         public void BeginRename(Guid id)
@@ -897,20 +1015,22 @@ namespace StructuredViews
             var header = _headers.FirstOrDefault(h => Inflated(h.Bounds, 0, 2).Contains(p));
             if (header != null)
             {
+                // Top or bottom edge of a header: before or after that folder in its level (custom order);
+                // the middle: into the folder.
                 var fraction = (p.Y - header.Bounds.Top) / header.Bounds.Height;
                 var parent = header.Node.Folder.Parent;
-                if (drop.Views.Count == 0 && custom && fraction < 0.3f)
+                if (custom && fraction < 0.3f)
                 {
                     drop.Folder = parent;
                     drop.Before = header.Id;
                     _dropMarker = new RectangleF(header.TextLeft, header.Bounds.Top - 1, header.Bounds.Right - header.TextLeft, 2);
                 }
-                else if (drop.Views.Count == 0 && custom && fraction > 0.7f && !header.Expanded)
+                else if (custom && fraction > 0.7f && !header.Expanded)
                 {
-                    var siblings = _structure.FoldersIn(parent);
-                    var next = siblings.SkipWhile(n => n.Folder.Id != header.Id).Skip(1).FirstOrDefault();
+                    var level = _structure.ItemsIn(parent);
+                    var at = level.FindIndex(i => i.Id == header.Id);
                     drop.Folder = parent;
-                    drop.Before = next?.Folder.Id ?? Guid.Empty;
+                    drop.Before = at >= 0 && at + 1 < level.Count ? level[at + 1].Id : Guid.Empty;
                     _dropMarker = new RectangleF(header.TextLeft, header.Bounds.Bottom - 1, header.Bounds.Right - header.TextLeft, 2);
                 }
                 else
@@ -921,16 +1041,29 @@ namespace StructuredViews
             }
             else
             {
-                var section = _sections.LastOrDefault(s => s.HitBounds.Contains(p)) ?? _sections.FirstOrDefault();
-                drop.Folder = section?.Folder ?? Guid.Empty;
-                _dropHeader = section?.Header;
-                if (section != null && custom && drop.Folders.Count == 0 && section.Views.Count > 0)
+                var section = _sections.LastOrDefault(s => s.HitBounds.Contains(p));
+                var container = _containers.LastOrDefault(c => c.Bounds.Contains(p));
+                if (section != null)
                 {
-                    var index = InsertIndex(section, p);
-                    drop.Before = section.Views.Skip(index).Select(v => v.View.Id).FirstOrDefault(id => !drop.Views.Contains(id));
-                    _dropMarker = MarkerFor(section, index);
-                    _dropHeader = null;
+                    drop.Folder = section.Folder;
+                    _dropHeader = section.Header;
+                    if (custom && section.Views.Count > 0)
+                    {
+                        // Between views of the run; after the last one means right before the next item.
+                        var index = InsertIndex(section, p);
+                        var moving = new HashSet<Guid>(drop.Views.Concat(drop.Folders));
+                        drop.Before = section.Views.Skip(index).Select(v => v.View.Id).Concat(new[] { section.Next }).FirstOrDefault(id => !moving.Contains(id));
+                        _dropMarker = MarkerFor(section, index);
+                        _dropHeader = null;
+                    }
                 }
+                else if (container != null)
+                {
+                    drop.Folder = container.Folder;
+                    _dropHeader = container.Header;
+                }
+                else
+                    drop.Folder = Guid.Empty;
             }
 
             // No folder into itself or below itself, and nothing that changes nothing.

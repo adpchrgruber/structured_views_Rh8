@@ -60,7 +60,7 @@ namespace StructuredViews
                 return Guid.Empty;
             var id = doc.NamedViews[index].NamedViewId;
             if (!existed)
-                MoveViews(doc, new[] { id }, folder, Guid.Empty);
+                MoveItems(doc, new[] { id }, folder, Guid.Empty);
             Thumbnails.Set(doc, id, Thumbnails.CaptureView(view));
             return id;
         }
@@ -103,10 +103,10 @@ namespace StructuredViews
                     continue;
                 var structure = Structure.Build(doc, SortMode.Custom);
                 var folder = structure.Store.FolderOf(id);
-                var siblings = structure.ViewsIn(folder);
-                var after = siblings.FindIndex(v => v.Id == id);
+                var siblings = structure.ItemsIn(folder);
+                var after = siblings.FindIndex(i => i.Id == id);
                 var before = after >= 0 && after + 1 < siblings.Count ? siblings[after + 1].Id : Guid.Empty;
-                MoveViews(doc, new[] { copy }, folder, before == copy ? Guid.Empty : before);
+                MoveItems(doc, new[] { copy }, folder, before == copy ? Guid.Empty : before);
                 Thumbnails.Set(doc, copy, Thumbnails.Get(doc, id));
                 copies.Add(copy);
             }
@@ -211,71 +211,114 @@ namespace StructuredViews
         #region Structure
 
         /// <summary>
-        /// Files views in a folder (Guid.Empty = top level), placed before <paramref name="before"/>
-        /// (Guid.Empty = at the end), and renumbers that folder's custom order.
+        /// The structure in shared order. A file from before views and folders shared one order is first
+        /// renumbered level by level exactly as it is shown (views, then folders), so nothing jumps.
         /// </summary>
-        public static void MoveViews(RhinoDoc doc, IList<Guid> viewIds, Guid folder, Guid before)
+        static Structure MixedStructure(RhinoDoc doc)
         {
             var structure = Structure.Build(doc, SortMode.Custom);
+            if (structure.Store.IsMixedMarked)
+                return structure;
             var store = structure.Store;
-            if (folder != Guid.Empty && !store.Folders.ContainsKey(folder))
-                folder = Guid.Empty;
-            var moving = new HashSet<Guid>(viewIds);
-            var order = structure.ViewsIn(folder).Select(v => v.Id).Where(id => !moving.Contains(id)).ToList();
-            var at = before == Guid.Empty ? -1 : order.IndexOf(before);
-            order.InsertRange(at < 0 ? order.Count : at, viewIds);
-            for (int i = 0; i < order.Count; i++)
-                store.SetPlace(order[i], folder, i);
+            store.SetItemOrder(Guid.Empty, structure.RootItems.Select(i => i.Id).ToList());
+            foreach (var node in structure.FolderNodes.Values)
+                store.SetItemOrder(node.Id, node.Items.Select(i => i.Id).ToList());
+            store.MarkMixed();
+            return Structure.Build(doc, SortMode.Custom);
         }
 
         /// <summary>
-        /// Moves folders under <paramref name="parent"/>, placed before <paramref name="before"/> (Guid.Empty =
-        /// at the end). Folders that would end up inside themselves are skipped; returns how many moved.
+        /// Moves views and folders (any mix) into <paramref name="parent"/> (Guid.Empty = top level), before
+        /// the item <paramref name="before"/> (a view or folder; Guid.Empty = at the end), keeping their own
+        /// order, and renumbers that level. A folder that would end up inside itself stays where it is.
+        /// Returns how many folders could not move.
         /// </summary>
-        public static int MoveFolders(RhinoDoc doc, IList<Guid> folderIds, Guid parent, Guid before)
+        public static int MoveItems(RhinoDoc doc, IList<Guid> ids, Guid parent, Guid before)
         {
-            var store = FolderStore.Load(doc);
-            var moved = folderIds.Where(id => store.MoveFolder(id, parent)).ToList();
-            if (moved.Count == 0)
-                return 0;
-            var structure = Structure.Build(doc, SortMode.Custom);
-            var movedSet = new HashSet<Guid>(moved);
-            var order = structure.FoldersIn(parent).Select(n => n.Folder.Id).Where(id => !movedSet.Contains(id)).ToList();
+            var structure = MixedStructure(doc);
+            var store = structure.Store;
+            if (parent != Guid.Empty && !store.Folders.ContainsKey(parent))
+                parent = Guid.Empty;
+            var refused = 0;
+            var moving = new List<Guid>();
+            // Moving items keep the order they are shown in.
+            var rank = structure.AllItems().Select((item, i) => (item.Id, i)).ToDictionary(t => t.Id, t => t.i);
+            foreach (var id in ids.Distinct().OrderBy(id => rank.TryGetValue(id, out var r) ? r : int.MaxValue))
+            {
+                if (store.Folders.ContainsKey(id))
+                {
+                    if (!store.MoveFolder(id, parent))
+                    {
+                        refused++;
+                        continue;
+                    }
+                }
+                moving.Add(id);
+            }
+            var movingSet = new HashSet<Guid>(moving);
+            var order = structure.ItemsIn(parent).Select(i => i.Id).Where(id => !movingSet.Contains(id)).ToList();
             var at = before == Guid.Empty ? -1 : order.IndexOf(before);
-            order.InsertRange(at < 0 ? order.Count : at, moved);
-            structure.Store.SetFolderOrder(order);
-            return moved.Count;
+            order.InsertRange(at < 0 ? order.Count : at, moving);
+            store.SetItemOrder(parent, order);
+            return refused;
         }
 
         /// <summary>
-        /// Moves views and folders one place up (-1) or down (+1) among their siblings in custom order. Items
+        /// Moves views and folders one place up (-1) or down (+1) within their level in custom order. Items
         /// that are already first/last, or blocked by another selected item there, stay put.
         /// </summary>
-        public static void Nudge(RhinoDoc doc, ICollection<Guid> viewIds, ICollection<Guid> folderIds, int step)
+        public static void Nudge(RhinoDoc doc, ICollection<Guid> ids, int step)
         {
-            var structure = Structure.Build(doc, SortMode.Custom);
+            var structure = MixedStructure(doc);
             var store = structure.Store;
-
-            List<Guid> Shift(List<Guid> order, ICollection<Guid> moving)
+            var parents = ids.Select(id => store.Folders.TryGetValue(id, out var f) ? f.Parent : store.FolderOf(id)).Distinct().ToList();
+            foreach (var parent in parents)
             {
-                var indices = Enumerable.Range(0, order.Count).Where(i => moving.Contains(order[i]));
+                var order = structure.ItemsIn(parent).Select(i => i.Id).ToList();
+                var indices = Enumerable.Range(0, order.Count).Where(i => ids.Contains(order[i]));
                 foreach (var i in step < 0 ? indices.ToList() : indices.Reverse().ToList())
                 {
                     var j = i + step;
-                    if (j >= 0 && j < order.Count && !moving.Contains(order[j]))
+                    if (j >= 0 && j < order.Count && !ids.Contains(order[j]))
                         (order[i], order[j]) = (order[j], order[i]);
                 }
-                return order;
+                store.SetItemOrder(parent, order);
             }
+        }
 
-            foreach (var folder in viewIds.Select(store.FolderOf).Distinct().ToList())
+        /// <summary>
+        /// Creates a folder in <paramref name="parent"/> before <paramref name="before"/> (Guid.Empty = at the
+        /// end) and moves <paramref name="contents"/> into it (views and folders; may be empty).
+        /// </summary>
+        public static Guid NewFolder(RhinoDoc doc, string name, Guid parent, Guid before, IList<Guid> contents)
+        {
+            MixedStructure(doc);
+            var folder = FolderStore.Load(doc).AddFolder(name, parent);
+            if (before != Guid.Empty)
+                MoveItems(doc, new[] { folder.Id }, folder.Parent, before);
+            if (contents.Count > 0)
+                MoveItems(doc, contents, folder.Id, Guid.Empty);
+            return folder.Id;
+        }
+
+        /// <summary>Deletes folders; what each one contained takes its place in its parent, in its order.</summary>
+        public static void DeleteFolders(RhinoDoc doc, IEnumerable<Guid> folderIds)
+        {
+            foreach (var id in folderIds.ToList())
             {
-                var order = Shift(structure.ViewsIn(folder).Select(v => v.Id).ToList(), viewIds);
-                for (int i = 0; i < order.Count; i++)
-                    store.SetPlace(order[i], folder, i);
+                var structure = MixedStructure(doc);
+                var store = structure.Store;
+                if (!store.Folders.TryGetValue(id, out var folder))
+                    continue;
+                var parent = folder.Parent;
+                var order = structure.ItemsIn(parent).Select(i => i.Id).ToList();
+                var at = order.IndexOf(id);
+                var contents = structure.ItemsIn(id).Select(i => i.Id).ToList();
+                store.DeleteFolder(id);
+                order.RemoveAt(at);
+                order.InsertRange(at, contents);
+                store.SetItemOrder(parent, order);
             }
-            foreach (var parent in folderIds.Where(store.Folders.ContainsKey).Select(id => store.Folders[id].Parent).Distinct().ToList())
-                store.SetFolderOrder(Shift(structure.FoldersIn(parent).Select(n => n.Folder.Id).ToList(), folderIds));
         }
 
         #endregion
@@ -314,7 +357,7 @@ namespace StructuredViews
                 if (id != Guid.Empty)
                     added.Add(id);
             }
-            MoveViews(doc, added, folder, Guid.Empty);
+            MoveItems(doc, added, folder, Guid.Empty);
             return added;
         }
 
@@ -355,9 +398,17 @@ namespace StructuredViews
             return Export(doc, path, doc.NamedViews.Select(v => v.NamedViewId).ToList(), store.Folders.Keys.ToList());
         }
 
+        /// <summary>
+        /// Reads what an import needs from a .3dm: named views (settings table) and the folder entries,
+        /// without any geometry, so even large models read in milliseconds. Safe to call off the UI thread.
+        /// </summary>
         public static File3dm ReadFile(string path)
         {
-            return File3dm.Read(path) ?? throw new IOException("Could not read " + Path.GetFileName(path) + ".");
+            const File3dm.TableTypeFilter tables = File3dm.TableTypeFilter.Properties | File3dm.TableTypeFilter.Settings | File3dm.TableTypeFilter.UserTable;
+            // An object filter of 0 (ObjectTypeFilter.None) means "all types" to openNURBS. Phantom objects are
+            // never saved, so filtering on them reads no objects at all (898 MB model: 13 ms instead of 3.2 s).
+            const File3dm.ObjectTypeFilter noObjects = (File3dm.ObjectTypeFilter)0x02000000;
+            return File3dm.Read(path, tables, noObjects) ?? throw new IOException("Could not read " + Path.GetFileName(path) + ".");
         }
 
         public sealed class ImportOptions
@@ -382,6 +433,9 @@ namespace StructuredViews
                 return null;
 
             var source = FolderStore.Load(file);
+            // The file's own display order (shared or old-style), to rebuild each level the same way.
+            var sourceStructure = Structure.Build(source, file.NamedViews.Select(v => (v.NamedViewId, v.Name)).ToList(), SortMode.Custom);
+            MixedStructure(doc);
             var store = FolderStore.Load(doc);
             if (!store.Folders.ContainsKey(target))
                 target = Guid.Empty;
@@ -413,19 +467,18 @@ namespace StructuredViews
             }
             var top = options.IntoNewFolder && (added.Count > 0 || needed.Count > 0) ? store.AddFolder(fileName, target).Id : target;
 
-            // Recreate the folders level by level in their custom order, so siblings keep their order.
-            var folderMap = new Dictionary<Guid, Guid> { [Guid.Empty] = top };
+            // Recreate the needed folders, then add the views; each level's order is set afterwards.
+            var map = new Dictionary<Guid, Guid> { [Guid.Empty] = top };
             void CopyFolders(Guid sourceParent)
             {
-                foreach (var folder in source.ChildFolders(sourceParent).Where(f => needed.Contains(f.Id)).OrderBy(f => f.Order).ThenBy(f => f.Name, NaturalComparer.Instance))
+                foreach (var folder in sourceStructure.ItemsIn(sourceParent).OfType<FolderNode>().Where(f => needed.Contains(f.Id)))
                 {
-                    folderMap[folder.Id] = store.AddFolder(folder.Name, folderMap[sourceParent]).Id;
+                    map[folder.Id] = store.AddFolder(folder.Name, map[sourceParent]).Id;
                     CopyFolders(folder.Id);
                 }
             }
             CopyFolders(Guid.Empty);
 
-            var appended = new List<(Guid Id, double Order)>();
             foreach (var info in views)
             {
                 var sourceId = info.NamedViewId;
@@ -437,17 +490,21 @@ namespace StructuredViews
                     continue;
                 }
                 var copy = AddCopy(doc, info, info.Name);
-                if (copy == Guid.Empty)
-                    continue;
-                var folder = folderMap.TryGetValue(source.FolderOf(sourceId), out var mapped) ? mapped : top;
-                if (folder == top && !options.IntoNewFolder)
-                    appended.Add((copy, source.OrderOf(sourceId)));
-                else
-                    store.SetPlace(copy, folder, source.OrderOf(sourceId));
+                if (copy != Guid.Empty)
+                    map[sourceId] = copy;
             }
-            // Views that land in an existing folder go to its end, in the file's order.
-            if (appended.Count > 0)
-                MoveViews(doc, appended.OrderBy(v => double.IsNaN(v.Order) ? double.MaxValue : v.Order).Select(v => v.Id).ToList(), top, Guid.Empty);
+
+            // Each imported level in the file's order. Created folders get exactly that; the receiving folder
+            // keeps what it had and takes the file's top level at its end.
+            List<Guid> Mapped(Guid sourceParent) => sourceStructure.ItemsIn(sourceParent)
+                .Where(i => i.Id != Guid.Empty && map.ContainsKey(i.Id)).Select(i => map[i.Id]).ToList();
+            foreach (var sourceFolder in needed)
+                store.SetItemOrder(map[sourceFolder], Mapped(sourceFolder));
+            var topLevel = Mapped(Guid.Empty);
+            if (options.IntoNewFolder)
+                store.SetItemOrder(top, topLevel);
+            else if (topLevel.Count > 0)
+                MoveItems(doc, topLevel, top, Guid.Empty);
             return top;
         }
 

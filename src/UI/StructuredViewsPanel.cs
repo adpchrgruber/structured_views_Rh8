@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using Eto.Drawing;
 using Eto.Forms;
 using Rhino;
@@ -37,6 +38,7 @@ namespace StructuredViews
         Guid _editing;
         bool _editingFolder;
         readonly Stopwatch _editorAge = new Stopwatch();
+        bool _reading;
         readonly IconButton _mode;
         readonly IconButton _restore;
         readonly IconButton _delete;
@@ -74,6 +76,7 @@ namespace StructuredViews
             _content = new PixelLayout();
             _content.Add(_canvas, 0, 0);
             _scroll = new Scrollable { Content = _content, Border = BorderType.None, ExpandContentWidth = true, ExpandContentHeight = false };
+            _scroll.Scroll += (s, e) => { if (_canvas.Notice != null) _canvas.Invalidate(); };
             _scroll.SizeChanged += (s, e) => Safe("layout", () =>
             {
                 _canvas.Width = Math.Max(120, _scroll.ClientSize.Width);
@@ -408,13 +411,29 @@ namespace StructuredViews
             var doc = Doc;
             if (doc == null)
                 return;
-            var parent = _canvas.TargetFolder;
-            var name = Prompt("New Folder", "Folder name:", "New Folder");
-            if (name == null)
+            var selected = _canvas.SelectedItems;
+            var dialog = new NewFolderDialog(selected.Count);
+            if (!dialog.ShowModal(this))
                 return;
-            var folder = FolderStore.Load(doc).AddFolder(name, parent);
+            // With the selection: the folder takes the place of the first selected item and the selection
+            // moves in. Without: a new folder at the end of the selected folder (or the selected view's).
+            Guid parent, before;
+            var contents = dialog.MoveSelection ? selected : new List<Guid>();
+            if (contents.Count > 0)
+            {
+                var store = FolderStore.Load(doc);
+                parent = store.Folders.TryGetValue(contents[0], out var first) ? first.Parent : store.FolderOf(contents[0]);
+                before = contents[0];
+            }
+            else
+            {
+                parent = _canvas.TargetFolder;
+                before = Guid.Empty;
+            }
+            var folder = ViewOps.NewFolder(doc, dialog.FolderName, parent, before, contents);
             _canvas.Collapsed.Remove(parent);
-            Refresh(new[] { folder.Id });
+            _canvas.Collapsed.Remove(folder);
+            Refresh(new[] { folder });
         }
 
         /// <summary>The menu's Rename: rename the one selected view or folder in place. (Not F2: Rhino keeps
@@ -514,9 +533,7 @@ namespace StructuredViews
             if (!Confirm(message))
                 return;
             ViewOps.Delete(doc, views);
-            store = FolderStore.Load(doc);
-            foreach (var folder in folders)
-                store.DeleteFolder(folder);
+            ViewOps.DeleteFolders(doc, folders);
             Refresh(Array.Empty<Guid>());
         }
 
@@ -559,7 +576,7 @@ namespace StructuredViews
                 return;
             var views = _canvas.SelectedViews.ToList();
             var folders = _canvas.SelectedFolders.ToList();
-            ViewOps.Nudge(doc, views, folders, step);
+            ViewOps.Nudge(doc, views.Concat(folders).ToList(), step);
             Refresh(views.Concat(folders).ToList());
         }
 
@@ -580,24 +597,35 @@ namespace StructuredViews
             if (doc == null)
                 return;
             var open = new Eto.Forms.OpenFileDialog { Title = all ? "Import All Named Views" : "Import Selected Named Views", Filters = { new FileFilter("Rhino 3D Models", ".3dm") } };
-            if (open.ShowDialog(this) != DialogResult.Ok)
+            if (open.ShowDialog(this) != DialogResult.Ok || _reading)
                 return;
-            Rhino.FileIO.File3dm file;
-            try
+            // Read in the background (only the tables that hold named views and folders, no geometry), with
+            // a notice in the panel, then carry on here.
+            var path = open.FileName;
+            _reading = true;
+            _canvas.Notice = "Reading " + Path.GetFileName(path) + "…";
+            Task.Run(() => ViewOps.ReadFile(path)).ContinueWith(task => Application.Instance.AsyncInvoke(() => Safe("import", () =>
             {
-                file = ViewOps.ReadFile(open.FileName);
-            }
-            catch (Exception ex)
-            {
-                RhinoDialogs.ShowMessage(ex.Message, "Structured Views");
+                _reading = false;
+                _canvas.Notice = null;
+                if (task.IsFaulted)
+                    RhinoDialogs.ShowMessage(task.Exception?.InnerException?.Message ?? "Could not read the file.", "Structured Views");
+                else
+                    ImportFrom(path, task.Result, all);
+            })));
+        }
+
+        void ImportFrom(string path, Rhino.FileIO.File3dm file, bool all)
+        {
+            var doc = Doc;
+            if (doc == null)
                 return;
-            }
             if (file.NamedViews.Count == 0)
             {
                 RhinoDialogs.ShowMessage("That file has no named views.", "Structured Views");
                 return;
             }
-            var name = Path.GetFileNameWithoutExtension(open.FileName);
+            var name = Path.GetFileNameWithoutExtension(path);
             var target = _canvas.TargetFolder;
             var store = FolderStore.Load(doc);
             var targetName = store.Folders.TryGetValue(target, out var targetFolder) ? $"the folder \"{targetFolder.Name}\"" : "the top level";
@@ -658,9 +686,7 @@ namespace StructuredViews
             var views = drop.Views;
             if (drop.Copy && views.Count > 0)
                 views = ViewOps.Duplicate(doc, views);
-            if (views.Count > 0)
-                ViewOps.MoveViews(doc, views, drop.Folder, drop.Before);
-            if (drop.Folders.Count > 0 && ViewOps.MoveFolders(doc, drop.Folders, drop.Folder, drop.Before) < drop.Folders.Count)
+            if (ViewOps.MoveItems(doc, views.Concat(drop.Folders).ToList(), drop.Folder, drop.Before) > 0)
                 RhinoApp.WriteLine("Structured Views: a folder can't move into itself or one of its subfolders.");
             _canvas.Collapsed.Remove(drop.Folder);
             Refresh(views.Concat(drop.Folders).ToList());

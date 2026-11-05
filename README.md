@@ -30,7 +30,7 @@ Requires Rhino 8 on Mac or Windows. Tested on macOS (light and dark mode) and Wi
    or use the menu: *Tools › Package Manager…* (Mac), *Tools › Package Manager* (Windows).
 
 2. **Turn on pre-releases.** Tick **Include pre-releases** at the bottom left of the window.
-   Structured Views is a beta (`0.9.3-beta`), and beta versions are hidden without this box.
+   Structured Views is a beta (`0.9.4-beta`), and beta versions are hidden without this box.
 
 3. **Find it.** On the **Online** tab, type `StructuredViews` into the search field.
 
@@ -62,26 +62,26 @@ untouched.
 ### Other ways to install
 
 - **From the package file:** download
-  [`dist/structuredviews-0.9.3-beta-rh8_0-any.yak`](dist/) and drag it into a Rhino window. Restart
+  [`dist/structuredviews-0.9.4-beta-rh8_0-any.yak`](dist/) and drag it into a Rhino window. Restart
   Rhino.
 - **From the command line** (Rhino closed), with this repository checked out:
 
   Mac (Terminal):
 
   ```sh
-  "/Applications/Rhino 8.app/Contents/Resources/bin/yak" install --source ./dist StructuredViews 0.9.3-beta
+  "/Applications/Rhino 8.app/Contents/Resources/bin/yak" install --source ./dist StructuredViews 0.9.4-beta
   ```
 
   Windows (Command Prompt):
 
   ```bat
-  "C:\Program Files\Rhino 8\System\Yak.exe" install --source .\dist StructuredViews 0.9.3-beta
+  "C:\Program Files\Rhino 8\System\Yak.exe" install --source .\dist StructuredViews 0.9.4-beta
   ```
 
   Or straight from the package server, from any folder:
 
   ```sh
-  "/Applications/Rhino 8.app/Contents/Resources/bin/yak" install StructuredViews 0.9.3-beta
+  "/Applications/Rhino 8.app/Contents/Resources/bin/yak" install StructuredViews 0.9.4-beta
   ```
 
   Giving the version number makes sure yak installs this beta.
@@ -90,9 +90,10 @@ untouched.
 
 The panel is a sectioned gallery rather than a tree:
 
-- Top-level views come first, as a thumbnail grid without a heading.
+- Views and folders share one order at every level, so a folder can sit between two groups of views.
+  Views next to each other form a thumbnail grid without a heading.
 - Every folder is a full-width header: a chevron, the folder name in bold and the number of views inside it.
-  Its views flow underneath in the same evenly spaced grid, followed by its subfolders.
+  Its views and subfolders follow underneath, in the same evenly spaced grid.
 - Nesting is shown by indenting the header and its contents and by a thin guide line, so thumbnails stay
   in clean columns instead of stepping sideways with every level.
 - Three view modes use the same sections: **Thumbnails** (the grid), **List** (rows with a small
@@ -113,16 +114,16 @@ second row instead of hiding buttons.
 | Action | How |
 |---|---|
 | Save the current viewport | Camera button. The view goes into the selected folder |
-| New folder | Folder button. It is created inside the selected folder |
+| New folder | Folder button. With views or folders selected, the dialog offers **Move the selected items into it** (ticked): the new folder takes the place of the first selected item and receives the selection. Otherwise it is created inside the selected folder |
 | Restore | Double-click the thumbnail (or the empty part of a row), Return, the restore button, or right-click › Restore › To Current Viewport / To New Floating Viewport |
 | Update to the current viewport | Right-click › Update to Current Viewport |
-| Rename a view or folder | Double-click its name and type; Return saves, Esc cancels, clicking elsewhere saves. Also right-click › Rename |
+| Rename a view or folder | Double-click its name, or press and hold the left mouse button on it, and type; Return saves, Esc cancels, clicking elsewhere saves. Also right-click › Rename |
 | Duplicate | Duplicate button, right-click › Duplicate, or ⌘D / Ctrl+D |
-| Delete | ✕ button, Delete or Backspace. A deleted folder's contents move up one level |
+| Delete | ✕ button, Delete or Backspace. A deleted folder's contents move up one level and take its place |
 | Properties (name, camera, target, lens) | Right-click › Properties… |
 | Copy and paste, also between open files | Toolbar, right-click, or ⌘C / ⌘V (Ctrl on Windows) |
 | Move into a folder | Drag onto a folder header, or right-click › Move to Folder |
-| Reorder (Custom Order) | Drag between thumbnails, or Move Up / Move Down. Drag onto the top or bottom edge of a folder header to put a folder before or after it |
+| Reorder (Custom Order) | Drag between thumbnails, or Move Up / Move Down. Views and folders mix freely: drag onto the top or bottom edge of a folder header to put a view or folder before or after it. Name sorting mixes them too |
 | Copy by dragging | Hold Option (Alt) while dragging |
 | Collapse or expand a folder | Click its chevron, double-click the header beside the name, or use ← / → |
 | Select several | ⌘ or Ctrl click, Shift click, ⌘A / Ctrl+A |
@@ -133,7 +134,8 @@ second row instead of hiding buttons.
 **Import and export.** An export is a .3dm that holds only the named views and their folders (no
 geometry, the document's units). Structured Views imports it with its folders; Rhino's own
 *NamedView › Import* reads the views too, without folders. Thumbnails are not exported, they are
-captured again after import. When importing you choose where the views go — a new folder named after
+captured again after import. Only the named views and folders are read, never the geometry, so even a large model opens for import
+in a moment; a notice at the top of the panel shows while the file is read. When importing you choose where the views go — a new folder named after
 the file, or the selected folder — and what happens when a name already exists: **Keep both** (the
 import gets a number, "Roof 2") or **Replace** (the existing view takes the imported camera and keeps
 its place). Only folders that receive views are created; Import All also brings the file's empty
@@ -144,6 +146,8 @@ folders.
 - **Folders** are stored in the document's string table, section `StructuredViews`:
   `f:<folder id>` = `parent|order|name` and `v:<named view id>` = `folder|order`.
   Views are matched by `ViewInfo.NamedViewId`, which stays the same when a view is renamed, updated or saved.
+  Views and folders in the same folder share one order; files saved with versions before 0.9.4 show their
+  folders after the views until you first reorder something (then the file gets the entry `format` = `2`).
   A view without an entry (for example one saved with Rhino's own panel) sits at the end of the top level.
 - **Thumbnails** are captured by the plug-in, because Rhino doesn't expose the ones from its own panel.
   - A view is captured from the active viewport when you save or update it.

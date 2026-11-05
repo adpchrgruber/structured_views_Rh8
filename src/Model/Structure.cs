@@ -5,127 +5,141 @@ using Rhino;
 
 namespace StructuredViews
 {
-    public sealed class ViewEntry
+    /// <summary>A view or a folder: what a folder (or the top level) contains, in one shared order.</summary>
+    public interface IItem
     {
-        public Guid Id;
-        public string Name;
-        /// <summary>Index in doc.NamedViews when the structure was built.</summary>
+        Guid Id { get; }
+        string Name { get; }
+    }
+
+    public sealed class ViewEntry : IItem
+    {
+        public Guid Id { get; set; }
+        public string Name { get; set; }
+        /// <summary>Index in the named-view table when the structure was built.</summary>
         public int Index;
         public Guid Folder;
     }
 
-    public sealed class FolderNode
+    public sealed class FolderNode : IItem
     {
         public Folder Folder;
         public int Depth;
-        public List<ViewEntry> Views = new List<ViewEntry>();
-        public List<FolderNode> Children = new List<FolderNode>();
+        /// <summary>Views and subfolders in display order, mixed.</summary>
+        public List<IItem> Items = new List<IItem>();
+        public IEnumerable<ViewEntry> Views => Items.OfType<ViewEntry>();
+        public IEnumerable<FolderNode> Children => Items.OfType<FolderNode>();
         /// <summary>Views in this folder and all folders below it.</summary>
         public int Total;
+        public Guid Id => Folder.Id;
+        public string Name => Folder.Name;
     }
 
     /// <summary>
-    /// The named views of a document arranged in their folders, in display order. Custom order puts views
-    /// with an explicit order first (by that order), then the rest in table order, so views saved by
-    /// Rhino's own panel show up at the end of their folder.
+    /// The named views of a document (or file) in their folders, in display order. Each folder and the top
+    /// level hold one list of views and subfolders. Custom order uses the stored order, which views and
+    /// folders share; views without one (saved by Rhino's own panel) follow at the end in table order.
+    /// Files from before the shared order showed a level's views first and its folders after; they keep
+    /// that look until the first reorder (see ViewOps.MixedStructure). Name order mixes views and folders.
     /// </summary>
     public sealed class Structure
     {
         public FolderStore Store { get; private set; }
-        public List<ViewEntry> RootViews { get; } = new List<ViewEntry>();
-        public List<FolderNode> RootFolders { get; } = new List<FolderNode>();
+        public List<IItem> RootItems { get; } = new List<IItem>();
         public Dictionary<Guid, FolderNode> FolderNodes { get; } = new Dictionary<Guid, FolderNode>();
         public int ViewCount { get; private set; }
+        public IEnumerable<FolderNode> RootFolders => RootItems.OfType<FolderNode>();
 
         public static Structure Build(RhinoDoc doc, SortMode sort)
         {
-            var structure = new Structure { Store = FolderStore.Load(doc) };
-            var store = structure.Store;
+            return Build(FolderStore.Load(doc), doc.NamedViews.Select(v => (v.NamedViewId, v.Name)).ToList(), sort);
+        }
 
-            List<FolderNode> AddFolders(Guid parent, int depth)
-            {
-                var nodes = new List<FolderNode>();
-                foreach (var folder in SortFolders(store.ChildFolders(parent), sort))
-                {
-                    var node = new FolderNode { Folder = folder, Depth = depth };
-                    structure.FolderNodes[folder.Id] = node;
-                    nodes.Add(node);
-                    node.Children = AddFolders(folder.Id, depth + 1);
-                }
-                return nodes;
-            }
-            structure.RootFolders.AddRange(AddFolders(Guid.Empty, 0));
+        /// <summary>Builds the structure of any set of named views (a document's, or a file's for import).</summary>
+        public static Structure Build(FolderStore store, IList<(Guid Id, string Name)> views, SortMode sort)
+        {
+            var structure = new Structure { Store = store, ViewCount = views.Count };
+            foreach (var folder in store.Folders.Values)
+                structure.FolderNodes[folder.Id] = new FolderNode { Folder = folder };
 
-            var all = new List<ViewEntry>();
-            int index = 0;
-            foreach (var info in doc.NamedViews)
+            var contents = new Dictionary<Guid, List<IItem>> { [Guid.Empty] = structure.RootItems };
+            foreach (var node in structure.FolderNodes.Values)
+                contents[node.Id] = node.Items;
+            foreach (var node in structure.FolderNodes.Values)
+                contents[node.Folder.Parent].Add(node);
+            for (int i = 0; i < views.Count; i++)
             {
-                var id = info.NamedViewId;
-                all.Add(new ViewEntry { Id = id, Name = info.Name, Index = index++, Folder = store.FolderOf(id) });
+                var view = new ViewEntry { Id = views[i].Id, Name = views[i].Name, Index = i, Folder = store.FolderOf(views[i].Id) };
+                contents[view.Folder].Add(view);
             }
-            structure.ViewCount = all.Count;
-            foreach (var view in SortViews(all, store, sort))
-            {
-                if (view.Folder != Guid.Empty && structure.FolderNodes.TryGetValue(view.Folder, out var node))
-                    node.Views.Add(view);
-                else
-                    structure.RootViews.Add(view);
-            }
+            foreach (var items in contents.Values)
+                Sort(items, store, sort);
 
-            int Count(FolderNode node) => node.Total = node.Views.Count + node.Children.Sum(Count);
+            void Walk(FolderNode node, int depth)
+            {
+                node.Depth = depth;
+                foreach (var child in node.Children)
+                    Walk(child, depth + 1);
+                node.Total = node.Views.Count() + node.Children.Sum(c => c.Total);
+            }
             foreach (var node in structure.RootFolders)
-                Count(node);
+                Walk(node, 0);
             return structure;
         }
 
-        static IEnumerable<ViewEntry> SortViews(IEnumerable<ViewEntry> views, FolderStore store, SortMode sort)
+        static void Sort(List<IItem> items, FolderStore store, SortMode sort)
         {
-            switch (sort)
+            if (sort != SortMode.Custom)
             {
-                case SortMode.NameAscending:
-                    return views.OrderBy(v => v.Name, NaturalComparer.Instance);
-                case SortMode.NameDescending:
-                    return views.OrderByDescending(v => v.Name, NaturalComparer.Instance);
-                default:
-                    return views
-                        .Select(v => new { View = v, Order = store.OrderOf(v.Id) })
-                        .OrderBy(x => double.IsNaN(x.Order) ? 1 : 0)
-                        .ThenBy(x => double.IsNaN(x.Order) ? 0 : x.Order)
-                        .ThenBy(x => x.View.Index)
-                        .Select(x => x.View);
+                var sign = sort == SortMode.NameDescending ? -1 : 1;
+                items.Sort((a, b) =>
+                {
+                    var c = sign * NaturalComparer.Instance.Compare(a.Name, b.Name);
+                    return c != 0 ? c : (a is FolderNode ? 0 : 1).CompareTo(b is FolderNode ? 0 : 1);
+                });
+                return;
             }
-        }
-
-        static IEnumerable<Folder> SortFolders(IEnumerable<Folder> folders, SortMode sort)
-        {
-            switch (sort)
+            // Rank 0: views and folders with a shared order; 1: views without one; 2: folders of a file that
+            // has no shared order yet (they come after its views, as before).
+            var mixed = store.IsMixed;
+            (int Rank, double Key, int Index) Key(IItem item)
             {
-                case SortMode.NameAscending:
-                    return folders.OrderBy(f => f.Name, NaturalComparer.Instance);
-                case SortMode.NameDescending:
-                    return folders.OrderByDescending(f => f.Name, NaturalComparer.Instance);
-                default:
-                    return folders.OrderBy(f => f.Order).ThenBy(f => f.Name, NaturalComparer.Instance);
+                if (item is FolderNode f)
+                    return (mixed ? 0 : 2, f.Folder.Order, int.MaxValue);
+                var v = (ViewEntry)item;
+                var order = store.OrderOf(v.Id);
+                return double.IsNaN(order) ? (1, 0, v.Index) : (0, order, v.Index);
             }
+            var keyed = items.Select(i => (Item: i, Key: Key(i))).ToList();
+            keyed.Sort((a, b) =>
+            {
+                var c = a.Key.Rank.CompareTo(b.Key.Rank);
+                if (c == 0) c = a.Key.Key.CompareTo(b.Key.Key);
+                if (c == 0) c = a.Key.Index.CompareTo(b.Key.Index);
+                return c != 0 ? c : NaturalComparer.Instance.Compare(a.Item.Name, b.Item.Name);
+            });
+            items.Clear();
+            items.AddRange(keyed.Select(k => k.Item));
         }
 
-        /// <summary>The views directly in a folder (Guid.Empty = top level), in display order.</summary>
-        public List<ViewEntry> ViewsIn(Guid folder)
+        /// <summary>What a folder (Guid.Empty = top level) contains, views and subfolders, in display order.</summary>
+        public List<IItem> ItemsIn(Guid folder)
         {
-            return folder == Guid.Empty ? RootViews : FolderNodes.TryGetValue(folder, out var node) ? node.Views : new List<ViewEntry>();
-        }
-
-        /// <summary>The folders directly in a folder (Guid.Empty = top level), in display order.</summary>
-        public List<FolderNode> FoldersIn(Guid parent)
-        {
-            return parent == Guid.Empty ? RootFolders : FolderNodes.TryGetValue(parent, out var node) ? node.Children : new List<FolderNode>();
+            return folder == Guid.Empty ? RootItems : FolderNodes.TryGetValue(folder, out var node) ? node.Items : new List<IItem>();
         }
 
         /// <summary>All views in display order, folders expanded.</summary>
         public IEnumerable<ViewEntry> AllViews()
         {
-            IEnumerable<ViewEntry> Walk(FolderNode node) => node.Views.Concat(node.Children.SelectMany(Walk));
-            return RootViews.Concat(RootFolders.SelectMany(Walk));
+            IEnumerable<ViewEntry> Walk(IEnumerable<IItem> items) => items.SelectMany(i => i is FolderNode f ? Walk(f.Items) : new[] { (ViewEntry)i });
+            return Walk(RootItems);
+        }
+
+        /// <summary>Every item in display order, folders expanded after themselves.</summary>
+        public IEnumerable<IItem> AllItems()
+        {
+            IEnumerable<IItem> Walk(IEnumerable<IItem> items) => items.SelectMany(i => i is FolderNode f ? new[] { i }.Concat(Walk(f.Items)) : new[] { i });
+            return Walk(RootItems);
         }
     }
 }

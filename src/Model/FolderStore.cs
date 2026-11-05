@@ -28,6 +28,10 @@ namespace StructuredViews
         public const string Section = "StructuredViews";
         const string FolderPrefix = "f:";
         const string ViewPrefix = "v:";
+        // Present once views and folders share one order per level (0.9.4 on). Older files list a level's
+        // views first and its folders after, each numbered on their own.
+        const string FormatEntry = "format";
+        const string MixedFormat = "2";
 
         struct Place
         {
@@ -39,6 +43,12 @@ namespace StructuredViews
         readonly Dictionary<Guid, Place> _views = new Dictionary<Guid, Place>();
 
         public Dictionary<Guid, Folder> Folders { get; } = new Dictionary<Guid, Folder>();
+
+        /// <summary>The shared order is stored (written on the first reorder of an older file).</summary>
+        public bool IsMixedMarked { get; private set; }
+
+        /// <summary>Views and folders can be read in one order: marked, or no folders to tell apart.</summary>
+        public bool IsMixed => IsMixedMarked || Folders.Count == 0;
 
         FolderStore(RhinoDoc doc)
         {
@@ -67,7 +77,9 @@ namespace StructuredViews
         void Parse(string entry, string value)
         {
             value ??= "";
-            if (entry.StartsWith(FolderPrefix) && Guid.TryParse(entry.Substring(FolderPrefix.Length), out var id))
+            if (entry == FormatEntry)
+                IsMixedMarked = value == MixedFormat;
+            else if (entry.StartsWith(FolderPrefix) && Guid.TryParse(entry.Substring(FolderPrefix.Length), out var id))
             {
                 var parts = value.Split(new[] { '|' }, 3);
                 if (parts.Length < 2)
@@ -149,12 +161,11 @@ namespace StructuredViews
         public Folder AddFolder(string name, Guid parent)
         {
             parent = Folders.ContainsKey(parent) ? parent : Guid.Empty;
-            var siblings = ChildFolders(parent).ToList();
             var folder = new Folder
             {
                 Id = Guid.NewGuid(),
                 Parent = parent,
-                Order = siblings.Count == 0 ? 0 : siblings.Max(f => f.Order) + 1,
+                Order = NextOrder(parent),
                 Name = Clean(name, "Folder"),
             };
             Folders[folder.Id] = folder;
@@ -187,17 +198,42 @@ namespace StructuredViews
             return true;
         }
 
-        /// <summary>Writes the given sibling order (0, 1, 2, …) for folders that share a parent.</summary>
-        public void SetFolderOrder(IList<Guid> ordered)
+        /// <summary>One past the highest order in a level (folders and views share it), for appending.</summary>
+        double NextOrder(Guid parent)
         {
-            for (int i = 0; i < ordered.Count; i++)
+            var orders = ChildFolders(parent).Select(f => f.Order)
+                .Concat(_views.Where(kv => kv.Value.Folder == parent && !double.IsNaN(kv.Value.Order)).Select(kv => kv.Value.Order))
+                .ToList();
+            return orders.Count == 0 ? 0 : Math.Floor(orders.Max()) + 1;
+        }
+
+        /// <summary>
+        /// Writes the order of a level: <paramref name="items"/> (views and folders, mixed) get 0, 1, 2, …
+        /// in <paramref name="parent"/>. Views are filed there; folders are expected to be there already.
+        /// </summary>
+        public void SetItemOrder(Guid parent, IList<Guid> items)
+        {
+            for (int i = 0; i < items.Count; i++)
             {
-                if (Folders.TryGetValue(ordered[i], out var folder) && folder.Order != i)
+                if (Folders.TryGetValue(items[i], out var folder))
                 {
-                    folder.Order = i;
-                    WriteFolder(folder);
+                    if (folder.Order != i)
+                    {
+                        folder.Order = i;
+                        WriteFolder(folder);
+                    }
                 }
+                else
+                    SetPlace(items[i], parent, i);
             }
+        }
+
+        public void MarkMixed()
+        {
+            if (IsMixedMarked)
+                return;
+            IsMixedMarked = true;
+            _doc?.Strings.SetString(Section, FormatEntry, MixedFormat);
         }
 
         /// <summary>Removes a folder. Its views and subfolders move up into its parent.</summary>
@@ -269,6 +305,8 @@ namespace StructuredViews
         /// </summary>
         public void WriteTo(Rhino.FileIO.File3dmStringTable strings, ICollection<Guid> folders, IEnumerable<Guid> views)
         {
+            if (IsMixedMarked)
+                strings.SetString(Section, FormatEntry, MixedFormat);
             foreach (var id in folders)
             {
                 if (Folders.TryGetValue(id, out var folder))
